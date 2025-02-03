@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ action }}</title>
+    <style>
+        label { display: block; margin-top: 10px; }
+        .field { margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+<h1>{{ action }}</h1>
+<form method="post">
+    {% csrf_token %}
+    {{ form.non_field_errors }}
+    {% for field in form %}
+    <div class="field">
+        <label for="{{ field.id_for_label }}">{{ field.label }} :</label>
+        {{ field }}
+        {{ field.errors }}
+    </div>
+    {% endfor %}
+    <button type="submit">Valider</button>
+</form>
+</body>
+</html>

@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Dashboard de Debug</title>
+    <style>
+        table { border-collapse: collapse; margin-bottom: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; }
+        h2 { margin-top: 40px; }
+        .toggle { /* style simple pour les toggles */ }
+    </style>
+</head>
+<body>
+<h1>Dashboard de Debug</h1>
+
+<!-- Section Leds -->
+<h2>Leds</h2>
+<a href="{% url 'create_leds' %}">Créer un nouveau Leds</a>
+<table>
+    <thead>
+    <tr>
+        <th>ID</th>
+        <th>Luminosité</th>
+        <th>Réactivité</th>
+        <th>Animation</th>
+        <th>Personnalisation</th>
+        <th>Actions</th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for led in leds_list %}
+    <tr>
+        <td>{{ led.id }}</td>
+        <td>{{ led.luminosite }}%</td>
+        <td>{{ led.reactivite|yesno:"On,Off" }}</td>
+        <td>{% if led.id_animation %}{{ led.id_animation.name }}{% else %}Aucune{% endif %}</td>
+        <td>{% if led.personnalisation %}{{ led.personnalisation.name }}{% else %}Aucune{% endif %}</td>
+        <td>
+            <a href="{% url 'update_leds' led.id %}">Éditer</a> |
+            <a href="{% url 'delete_leds' led.id %}">Supprimer</a>
+        </td>
+    </tr>
+    {% empty %}
+    <tr>
+        <td colspan="6">Aucun Leds trouvé.</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+
+<!-- Section LedsAnimation -->
+<h2>Leds Animation</h2>
+<a href="{% url 'create_leds_animation' %}">Créer une nouvelle Animation</a>
+<table>
+    <thead>
+    <tr>
+        <th>ID</th>
+        <th>Nom</th>
+        <th>Actions</th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for anim in animations_list %}
+    <tr>
+        <td>{{ anim.id }}</td>
+        <td>{{ anim.name }}</td>
+        <td>
+            <a href="{% url 'update_leds_animation' anim.id %}">Éditer</a> |
+            <a href="{% url 'delete_leds_animation' anim.id %}">Supprimer</a>
+        </td>
+    </tr>
+    {% empty %}
+    <tr>
+        <td colspan="3">Aucune animation trouvée.</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+
+<!-- Section LedsPersonnalisation -->
+<h2>Leds Personnalisation</h2>
+<a href="{% url 'create_leds_personnalisation' %}">Créer une nouvelle Personnalisation</a>
+<table>
+    <thead>
+    <tr>
+        <th>ID</th>
+        <th>Nom</th>
+        <th>Color Gestion</th>
+        <th>Actions</th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for pers in personnalisation_list %}
+    <tr>
+        <td>{{ pers.id }}</td>
+        <td>{{ pers.name }}</td>
+        <td>{{ pers.color_gestion }}</td>
+        <td>
+            <a href="{% url 'update_leds_personnalisation' pers.id %}">Éditer</a> |
+            <a href="{% url 'delete_leds_personnalisation' pers.id %}">Supprimer</a>
+        </td>
+    </tr>
+    {% empty %}
+    <tr>
+        <td colspan="4">Aucune personnalisation trouvée.</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+
+<!-- Section WidgetMusique -->
+<h2>Widget Musique</h2>
+<a href="{% url 'create_widget_musique' %}">Créer un Widget Musique</a>
+<table>
+    <thead>
+    <tr>
+        <th>ID</th>
+        <th>Personalisation</th>
+        <th>Pos X</th>
+        <th>Pos Y</th>
+        <th>Actions</th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for wm in widget_musique_list %}
+    <tr>
+        <td>{{ wm.id }}</td>
+        <td>{{ wm.personalisation }}</td>
+        <td>{{ wm.pos_x }}</td>
+        <td>{{ wm.pos_y }}</td>
+        <td>
+            <a href="{% url 'update_widget_musique' wm.id %}">Éditer</a> |
+            <a href="{% url 'delete_widget_musique' wm.id %}">Supprimer</a>
+        </td>
+    </tr>
+    {% empty %}
+    <tr>
+        <td colspan="5">Aucun Widget Musique trouvé.</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+
+<!-- Section WidgetMeteo -->
+<h2>Widget Meteo</h2>
+<a href="{% url 'create_widget_meteo' %}">Créer un Widget Meteo</a>
+<table>
+    <thead>
+    <tr>
+        <th>ID</th>
+        <th>Personalisation</th>
+        <th>Pos X</th>
+        <th>Pos Y</th>
+        <th>Actions</th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for wm in widget_meteo_list %}
+    <tr>
+        <td>{{ wm.id }}</td>
+        <td>{{ wm.personalisation }}</td>
+        <td>{{ wm.pos_x }}</td>
+        <td>{{ wm.pos_y }}</td>
+        <td>
+            <a href="{% url 'update_widget_meteo' wm.id %}">Éditer</a> |
+            <a href="{% url 'delete_widget_meteo' wm.id %}">Supprimer</a>
+        </td>
+    </tr>
+    {% empty %}
+    <tr>
+        <td colspan="5">Aucun Widget Meteo trouvé.</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+
+<!-- Section WidgetHeure -->
+<h2>Widget Heure</h2>
+<a href="{% url 'create_widget_heure' %}">Créer un Widget Heure</a>
+<table>
+    <thead>
+    <tr>
+        <th>ID</th>
+        <th>Personalisation</th>
+        <th>Pos X</th>
+        <th>Pos Y</th>
+        <th>Actions</th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for wh in widget_heure_list %}
+    <tr>
+        <td>{{ wh.id }}</td>
+        <td>{{ wh.personalisation }}</td>
+        <td>{{ wh.pos_x }}</td>
+        <td>{{ wh.pos_y }}</td>
+        <td>
+            <a href="{% url 'update_widget_heure' wh.id %}">Éditer</a> |
+            <a href="{% url 'delete_widget_heure' wh.id %}">Supprimer</a>
+        </td>
+    </tr>
+    {% empty %}
+    <tr>
+        <td colspan="5">Aucun Widget Heure trouvé.</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+
+<!-- Section CoreSettings -->
+<h2>Core Settings</h2>
+<a href="{% url 'create_coresettings' %}">Créer Core Settings</a>
+<table>
+    <thead>
+    <tr>
+        <th>ID</th>
+        <th>Leds</th>
+        <th>Widget Heure</th>
+        <th>Widget Meteo</th>
+        <th>Widget Musique</th>
+        <th>Actions</th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for cs in coresettings_list %}
+    <tr>
+        <td>{{ cs.id }}</td>
+        <td>{{ cs.leds|yesno:"On,Off" }}</td>
+        <td>{{ cs.wgt_heure|yesno:"On,Off" }}</td>
+        <td>{{ cs.wgt_meteo|yesno:"On,Off" }}</td>
+        <td>{{ cs.wgt_musique|yesno:"On,Off" }}</td>
+        <td>
+            <a href="{% url 'update_coresettings' cs.id %}">Éditer</a> |
+            <a href="{% url 'delete_coresettings' cs.id %}">Supprimer</a>
+        </td>
+    </tr>
+    {% empty %}
+    <tr>
+        <td colspan="6">Aucun Core Settings trouvé.</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</body>
+</html>
