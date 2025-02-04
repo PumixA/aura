@@ -1,9 +1,22 @@
-# Django framework
+# ============================
+# Dépendances générales
+# ============================
 Django==4.2.3
-
-# PostgreSQL driver
 psycopg2-binary==2.9.7
-
-# Gestion des variables d'environnement
 python-decouple==3.8
 
+# ============================
+# Dépendances spécifiques à Windows
+# ============================
+PyGetWindow==0.0.9
+pyautogui==0.9.53
+
+# ============================
+# Dépendances spécifiques à Linux
+# ============================
+# Décommentez la ligne ci-dessous si vous utilisez Linux
+# wmctrl==1.07
+
+# ============================
+# (Dépendances pour macOS peuvent être ajoutées ici si nécessaire)
+# ============================

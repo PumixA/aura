@@ -2,7 +2,7 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
-    path('debug/', views.debug_dashboard, name='debug_dashboard'),
+    path('', views.debug_dashboard, name='debug_dashboard'),
 
     # CRUD pour Leds
     path('leds/create/', views.create_leds, name='create_leds'),
