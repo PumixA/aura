@@ -1,0 +1,9 @@
+# Django framework
+Django==4.2.3
+
+# PostgreSQL driver
+psycopg2-binary==2.9.7
+
+# Gestion des variables d'environnement
+python-decouple==3.8
+
