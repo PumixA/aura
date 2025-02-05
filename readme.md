@@ -15,6 +15,7 @@
    - [2) Créer un environnement virtuel](#2-créer-un-environnement-virtuel)
    - [3) Installer les dépendances](#3-installer-les-dépendances)
    - [4) Configurer la base de données](#4-configurer-la-base-de-données)
+   - [5) Logiciels nécéssaires](#5-logiciels)
    - [5) Migrations et lancement](#5-migrations-et-lancement)
 4. [Utilisation spécifique au Raspberry Pi](#utilisation-spécifique-au-raspberry-pi)
 5. [Crédits](#crédits)
@@ -81,7 +82,7 @@ Il est recommandé d’utiliser un **environnement virtuel** pour isoler les dé
 
 ### 3) Installer les dépendances
 
-Une fois l’environnement virtuel activé, installe les dépendances listées dans `requirements.txt` :
+Une fois l’environnement virtuel activé, il faut aller dans le fichier `requirements.txt`, décommenter les lignes specifiques a votre os, et commenter les autres. Ensuite, installe les dépendances listées :
 
 ```bash
 pip install -r requirements.txt
@@ -103,24 +104,34 @@ Configuré un fichier `.env` au même niveau que `manage.py`, avec :
 
 Assure-toi que le fichier `settings.py` (dans `aura/`) lit bien ces variables via `python-decouple`.
 
-### 5) Migrations et lancement
+### 5) Logiciel nécéssaires
 
-1. **Mise à jour de la base**
+Si tu n'as pas [firefox](https://www.mozilla.org/fr/firefox/new/) d'installé, il faut l'installer pour la suite.
+
+### 6) Migrations et lancement
+
+1. **Mise à jour de la base**  
+   Appliquez les migrations pour mettre à jour la structure de votre base de données PostgreSQL en fonction de vos modèles Django.
    ```bash
    python manage.py migrate
    ```
-2. **Création d’un superuser (optionnel mais recommandé)**
+
+2. **Création d’un superuser (optionnel mais recommandé)**  
+   Créez un superuser pour accéder à l’interface d’administration de Django.
    ```bash
    python manage.py createsuperuser
    ```
-3. **Lancer le serveur de développement**
-   ```bash
-   python manage.py runserver
-   ```
-4. Accéder au projet via ton **navigateur** :  
-   [http://127.0.0.1:8000/](http://127.0.0.1:8000/) (ou l’IP de ta machine sur le port 8000)
 
----
+3. **Lancement du serveur en mode kiosque**  
+   Pour lancer le serveur avec l’ouverture automatique de Firefox en mode kiosque sur l’écran sélectionné, exécutez :
+   ```bash
+   python manage.py runserver_kiosk
+   ```
+   Cette commande effectue les opérations suivantes :
+    - Démarre le serveur Django.
+    - Détecte automatiquement les moniteurs connectés. Si plusieurs écrans sont détectés, vous serez invité à sélectionner le numéro de l’écran sur lequel vous souhaitez afficher l’application.
+    - Lance Firefox en mode fenêtré avec les dimensions et la position correspondant à l’écran choisi, puis simule la touche F11 pour passer en plein écran.
+    - Surveille la fenêtre du navigateur : dès que vous la fermez, le serveur Django et le programme s’arrêtent automatiquement.
 
 ## Utilisation spécifique au Raspberry Pi
 

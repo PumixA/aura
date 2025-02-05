@@ -56,8 +56,8 @@ def get_windows_monitors():
 class Command(RunserverCommand):
     help = ("Lance le serveur Django et ouvre automatiquement Firefox en mode kiosque sur l'écran sélectionné. "
             "Firefox est d'abord lancé en mode fenêtré avec les dimensions et la position correspondant à l'écran choisi, "
-            "puis la touche F11 est simulée pour passer en plein écran. Pour un comportement véritablement kiosque, "
-            "il est recommandé d'utiliser un profil personnalisé de Firefox avec les préférences adéquates.")
+            "puis la touche F11 est simulée pour passer en plein écran. "
+            "Dès que la fenêtre du navigateur est fermée, le serveur et le programme s'arrêtent automatiquement.")
 
     def inner_run(self, *args, **options):
         threading.Thread(target=self.launch_browser_with_kiosk, daemon=True).start()
@@ -76,17 +76,21 @@ class Command(RunserverCommand):
         screen_number = 1  # par défaut
         target_geometry = None
         if screens:
-            self.log("-> Écrans détectés :")
-            for idx, screen in enumerate(screens, start=1):
-                self.log(f"   [{idx}] {screen['name']} - {screen['width']}x{screen['height']} à ({screen['x']},{screen['y']}) - Orientation: {screen['orientation']}")
-            try:
-                screen_input = input("   Entrez le numéro de l'écran souhaité (défaut 1) : ")
-                screen_number = int(screen_input) if screen_input.strip() else 1
-            except Exception:
+            if len(screens) == 1:
+                self.log("-> Un seul écran détecté. Utilisation automatique de l'écran 1.")
                 screen_number = 1
-            if screen_number < 1 or screen_number > len(screens):
-                self.log("-> Numéro d'écran invalide, utilisation de la valeur par défaut (1).")
-                screen_number = 1
+            else:
+                self.log("-> Écrans détectés :")
+                for idx, screen in enumerate(screens, start=1):
+                    self.log(f"   [{idx}] {screen['name']} - {screen['width']}x{screen['height']} à ({screen['x']},{screen['y']}) - Orientation: {screen['orientation']}")
+                try:
+                    screen_input = input("   Entrez le numéro de l'écran souhaité (défaut 1) : ")
+                    screen_number = int(screen_input) if screen_input.strip() else 1
+                except Exception:
+                    screen_number = 1
+                if screen_number < 1 or screen_number > len(screens):
+                    self.log("-> Numéro d'écran invalide, utilisation de la valeur par défaut (1).")
+                    screen_number = 1
             target_geometry = screens[screen_number - 1]
         else:
             self.log("-> Aucune information d'écran détectée, utilisation de l'écran par défaut.")
@@ -104,12 +108,12 @@ class Command(RunserverCommand):
         self.log("-> Lancement de Firefox en mode fenêtré avec les dimensions de l'écran choisi...")
         self.log(f"   Commande utilisée : {' '.join(browser_cmd)}")
         try:
-            subprocess.Popen(browser_cmd)
+            browser_process = subprocess.Popen(browser_cmd)
         except Exception as e:
             self.log(f"-> Erreur lors du lancement du navigateur : {e}")
             return
 
-        # Attendre brièvement pour que Firefox s'ouvre et se positionne correctement
+        # Attendre brièvement pour que Firefox se lance et se positionne correctement
         time.sleep(1)
         if sys.platform.startswith("linux"):
             self.position_window_linux(target_geometry)
@@ -118,18 +122,18 @@ class Command(RunserverCommand):
         elif sys.platform.startswith("darwin"):
             self.log("-> Le repositionnement automatique n'est pas implémenté pour macOS.")
 
-        # Ensuite, envoyer la touche F11 pour passer en plein écran (mode kiosque)
+        # Envoyer la touche F11 pour passer en plein écran (mode kiosque)
         self.enter_full_screen()
 
-        self.log("-> Firefox est maintenant en plein écran sur l'écran sélectionné. Pour quitter, appuyez sur Échap.")
+        self.log("-> Firefox est désormais en plein écran sur l'écran sélectionné.")
+        self.log("-> La fermeture de la fenêtre du navigateur arrêtera le serveur et le programme.")
+
+        # Surveiller la fenêtre de Firefox : tant qu'elle existe, le programme reste en vie.
+        self.monitor_browser(browser_process)
+        self.log("-> La fenêtre du navigateur a été fermée. Arrêt du serveur et du programme...")
+        os._exit(0)
 
     def get_browser_command(self, target_geometry=None):
-        """
-        Vérifie si Firefox est installé automatiquement.
-        Sinon, demande un chemin manuel et le sauvegarde.
-        Si target_geometry est fourni, ajoute les options -width et -height pour lancer avec ces dimensions.
-        Retourne la commande pour lancer Firefox sur http://127.0.0.1:8000 en mode fenêtré.
-        """
         url = "http://127.0.0.1:8000"
         extra_args = []
         if target_geometry:
@@ -180,7 +184,7 @@ class Command(RunserverCommand):
                 firefox_path = self.get_manual_browser_path()
             if firefox_path:
                 self.log(f"-> Firefox utilisé : {firefox_path}")
-                return ["open", "-a", "Firefox", "--args", url]  # Les options de taille sont difficiles sur macOS
+                return ["open", "-a", "Firefox", "--args", url]
             else:
                 return None
         else:
@@ -291,3 +295,39 @@ class Command(RunserverCommand):
             self.log("-> Touche F11 envoyée.")
         except ImportError:
             self.log("-> pyautogui n'est pas installé, le passage en plein écran devra être fait manuellement.")
+
+    def monitor_browser(self, browser_process):
+        self.log("-> Surveillance de la fenêtre Firefox...")
+        while True:
+            still_open = False
+            if sys.platform.startswith("win"):
+                try:
+                    import pygetwindow as gw
+                    windows = gw.getWindowsWithTitle("Firefox")
+                    if not windows:
+                        windows = gw.getWindowsWithTitle("Mozilla Firefox")
+                    if windows:
+                        still_open = True
+                except Exception:
+                    still_open = False
+            elif sys.platform.startswith("linux"):
+                try:
+                    wmctrl_path = shutil.which("wmctrl")
+                    if wmctrl_path:
+                        output = subprocess.check_output([wmctrl_path, "-l"]).decode("utf-8")
+                        if "Firefox" in output:
+                            still_open = True
+                except Exception:
+                    still_open = False
+            else:
+                # Pour macOS ou autres, on utilise le wait() de base
+                try:
+                    browser_process.poll()
+                    if browser_process.returncode is None:
+                        still_open = True
+                except Exception:
+                    still_open = False
+
+            if not still_open:
+                break
+            time.sleep(1)
