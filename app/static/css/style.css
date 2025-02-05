@@ -15,14 +15,13 @@ header, footer {
 }
 
 main {
-    min-height: calc(100% - 250px); /* Ajustez en fonction de la hauteur du header et du footer */
+    min-height: calc(100% - 250px);
     display: flex;
     justify-content: center;
     align-items: center;
     text-align: center;
 }
 
-/* Style du bouton LED dans le footer */
 #led-button {
     width: 70px;
     height: 70px;
