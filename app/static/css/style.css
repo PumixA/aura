@@ -1,4 +1,3 @@
-/* Assurez-vous que html et body occupent 100% du viewport sans scroll */
 html, body {
     margin: 0;
     padding: 0;
@@ -7,35 +6,34 @@ html, body {
     overflow: hidden;
     background-color: #000;
     color: #fff;
+    font-family: Arial, sans-serif;
 }
 
-/* Style du bouton LED */
-.led-button {
-    position: relative;
-    display: inline-block;
+header, footer {
+    padding: 10px;
+    text-align: center;
+}
+
+main {
+    min-height: calc(100% - 250px); /* Ajustez en fonction de la hauteur du header et du footer */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+}
+
+/* Style du bouton LED dans le footer */
+#led-button {
     width: 70px;
     height: 70px;
-    border-radius: 50%;
+    border-radius: 100%;
     cursor: pointer;
+    transition: background-color 0.3s ease;
     border: solid 5px #D9D9D9;
-    background-color: transparent; /* état 'on' = transparent */
+    background-color: transparent;
     outline: none;
-    overflow: hidden; /* Nécessaire pour masquer l'animation ripple hors du bouton */
-    transition: background-color 0.3s ease, transform 0.1s ease;
 }
 
-/* État "off" : fond gris */
-.led-button.off {
+#led-button.off {
     background-color: #D9D9D9;
-}
-
-/* L'effet ripple : style initial */
-.ripple-effect {
-    position: absolute;
-    width: 20px;
-    height: 20px;
-    background: rgba(217, 217, 217, 0.5);
-    border-radius: 50%;
-    transform: scale(0);
-    pointer-events: none;
 }

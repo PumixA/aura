@@ -1,85 +1,22 @@
-<!DOCTYPE html>
+{% extends 'base.html' %}
+
+{% block title %}Accueil - Aura{% endblock %}
+
+{% block extra_css %}
 {% load static %}
-<html lang="fr">
-<head>
-    <meta charset="UTF-8">
-    <title>Index - Aura (Miroir connecté)</title>
-    <link rel="stylesheet" href="{% static 'css/style.css' %}">
-    <!-- Charger anime.js depuis un CDN -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-</head>
-<body>
-<h1>Bienvenue sur Aura</h1>
-<!-- Le bouton LED contient un span pour l'effet ripple -->
-<button id="led-button" class="led-button {% if core_settings.leds %}on{% else %}off{% endif %}">
-    <span class="ripple"></span>
-</button>
+<link rel="stylesheet" href="{% static 'css/index.css' %}">
+{% endblock %}
 
-<script>
-    $(document).ready(function(){
-        // Effet au clic pour simuler l'enfoncement et le rebond
-        $('#led-button').on('mousedown', function(){
-            anime({
-                targets: '#led-button',
-                scale: 0.95,
-                duration: 100,
-                easing: 'easeInOutQuad'
-            });
-        }).on('mouseup mouseleave', function(){
-            anime({
-                targets: '#led-button',
-                scale: 1,
-                duration: 100,
-                easing: 'easeInOutQuad'
-            });
-        });
+{% block header %}
+{{ block.super }}
+{% endblock %}
 
-        // Effet ripple : création dynamique d'une ondulation lors du clic
-        $('#led-button').on('click', function(e){
-            // Récupérer la position du clic dans le bouton
-            var offset = $(this).offset();
-            var x = e.pageX - offset.left;
-            var y = e.pageY - offset.top;
+{% block content %}
+<div class="welcome">
+    <p>Bienvenue sur Aura</p>
+</div>
+{% endblock %}
 
-            // Créer l'élément ripple et le positionner
-            var $ripple = $('<span class="ripple-effect"></span>');
-            $ripple.css({
-                top: y,
-                left: x
-            });
-            $(this).append($ripple);
-
-            // Lancer l'animation ripple avec anime.js
-            anime({
-                targets: $ripple.get(0),
-                scale: [0, 4],
-                opacity: [1, 0],
-                duration: 600,
-                easing: 'easeOutQuad',
-                complete: function(anim) {
-                    $ripple.remove();
-                }
-            });
-
-            // Envoyer la requête AJAX pour basculer l'état des LEDs
-            $.ajax({
-                url: "{% url 'toggle_leds' %}",
-                type: "POST",
-                data: {},
-                success: function(data) {
-                    if(data.leds) {
-                        $('#led-button').removeClass('off').addClass('on');
-                    } else {
-                        $('#led-button').removeClass('on').addClass('off');
-                    }
-                },
-                error: function(xhr, status, error) {
-                    console.error("Erreur lors du basculement des LEDs:", error);
-                }
-            });
-        });
-    });
-</script>
-</body>
-</html>
+{% block footer %}
+{{ block.super }}
+{% endblock %}

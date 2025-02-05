@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+{% load static %}
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>{% block title %}Aura - Miroir connecté{% endblock %}</title>
+    <!-- Lien vers le CSS global -->
+    <link rel="stylesheet" href="{% static 'css/style.css' %}">
+    <!-- Bloc pour charger des styles supplémentaires spécifiques à chaque page -->
+    {% block extra_css %}{% endblock %}
+    <!-- Charger jQuery et anime.js pour toutes les pages -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
+</head>
+<body>
+<!-- HEADER -->
+<header>
+    {% block header %}
+    <h1>Aura</h1>
+    {% endblock %}
+</header>
+
+<!-- CONTENU PRINCIPAL -->
+<main>
+    {% block content %}
+    <!-- Le contenu spécifique de chaque page ira ici -->
+    {% endblock %}
+</main>
+
+<!-- FOOTER -->
+<footer>
+    {% block footer %}
+    <!-- Bouton LED commun à toutes les pages -->
+    <button id="led-button" class="{% if core_settings.leds %}on{% else %}off{% endif %}"></button>
+    {% endblock %}
+</footer>
+
+<!-- Intégration du script d'animation commun pour le bouton LED -->
+{% block extra_js %}
+<script>
+    // Le code suivant sera exécuté sur toutes les pages qui étendent base.html
+    $(document).ready(function(){
+        // Effet tactile : enfoncement et rebond sur le bouton LED
+        $('#led-button').on('mousedown', function(){
+            anime({
+                targets: '#led-button',
+                scale: 0.95,
+                duration: 100,
+                easing: 'easeInOutQuad'
+            });
+        }).on('mouseup mouseleave', function(){
+            anime({
+                targets: '#led-button',
+                scale: 1,
+                duration: 100,
+                easing: 'easeInOutQuad'
+            });
+        });
+
+        // Gestion du clic pour changer l'état via AJAX
+        $('#led-button').click(function(){
+            // Animation d'effet de transition (exemple simple ici, à ajuster selon vos envies)
+            anime({
+                targets: '#led-button',
+                backgroundColor: ['#D9D9D9', 'transparent'],
+                duration: 300,
+                easing: 'easeInOutQuad'
+            });
+
+            $.ajax({
+                url: "{% url 'toggle_leds' %}",
+                type: "POST",
+                data: {},
+                success: function(data) {
+                    // Mise à jour de l'apparence du bouton en fonction du nouvel état
+                    if(data.leds) {
+                        $('#led-button').removeClass('off').addClass('on');
+                    } else {
+                        $('#led-button').removeClass('on').addClass('off');
+                    }
+                },
+                error: function(xhr, status, error) {
+                    console.error("Erreur lors du basculement des LEDs:", error);
+                }
+            });
+        });
+    });
+</script>
+{% endblock %}
+</body>
+</html>
