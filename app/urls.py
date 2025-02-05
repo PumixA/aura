@@ -2,7 +2,10 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
-    path('', views.debug_dashboard, name='debug_dashboard'),
+    path('', views.index, name='index'),
+    path('toggle-leds/', views.toggle_leds, name='toggle_leds'),
+
+    path('debug', views.debug_dashboard, name='debug_dashboard'),
 
     # CRUD pour Leds
     path('leds/create/', views.create_leds, name='create_leds'),

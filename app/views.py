@@ -7,6 +7,37 @@ from .forms import (
     LedsForm, LedsAnimationForm, LedsPersonnalisationForm,
     WidgetMusiqueForm, WidgetMeteoForm, WidgetHeureForm, CoreSettingsForm
 )
+from django.http import JsonResponse
+from django.views.decorators.http import require_POST
+from django.views.decorators.csrf import csrf_exempt
+
+# ----- Index -----
+def index(request):
+    # Vérifier si la ligne existe dans CoreSettings, sinon la créer avec tout à False
+    core_settings, created = CoreSettings.objects.get_or_create(id=1, defaults={
+        'leds': False,
+        'wgt_heure': False,
+        'wgt_meteo': False,
+        'wgt_musique': False,
+    })
+    context = {
+        'core_settings': core_settings
+    }
+    return render(request, 'index.html', context)
+
+@csrf_exempt  # Pour simplifier le test, à sécuriser en production !
+@require_POST
+def toggle_leds(request):
+    core_settings, created = CoreSettings.objects.get_or_create(id=1, defaults={
+        'leds': False,
+        'wgt_heure': False,
+        'wgt_meteo': False,
+        'wgt_musique': False,
+    })
+    # Inverser l'état des leds
+    core_settings.leds = not core_settings.leds
+    core_settings.save()
+    return JsonResponse({'leds': core_settings.leds})
 
 # ----- Dashboard de Debug -----
 def debug_dashboard(request):
