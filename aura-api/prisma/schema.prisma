@@ -1,0 +1,112 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String     @id @default(uuid())
+  email        String     @unique
+  passwordHash String
+  firstName    String?
+  lastName     String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  prefs        UserPrefs?
+  devices      Device[]
+  sessions     Session[]
+  audits       Audit[]
+}
+
+model UserPrefs {
+  userId      String   @id
+  theme       String   @default("light")
+  unitSystem  String   @default("metric")
+  locale      String   @default("fr-FR")
+  widgetsOrder Json?
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Device {
+  id        String      @id @default(uuid())
+  ownerId   String
+  name      String
+  pairedAt  DateTime?
+  createdAt DateTime    @default(now())
+  owner     User        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  pairing   DevicePairingToken?
+  led       LedState?
+  music     MusicState?
+  widgets   DeviceWidget[]
+  audits    Audit[]
+  apiKeyHash  String?
+  disabled    Boolean   @default(false)
+  @@index([ownerId])
+}
+
+model DevicePairingToken {
+  deviceId  String   @id
+  token     String   @unique
+  expiresAt DateTime
+  device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  @@index([expiresAt])
+}
+
+model LedState {
+  deviceId   String   @id
+  on         Boolean  @default(false)
+  color      String   @default("#FFFFFF")
+  brightness Int      @default(50)
+  preset     String?
+  updatedAt  DateTime @updatedAt
+  device     Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+}
+
+model MusicState {
+  deviceId   String   @id
+  status     String   @default("pause")
+  volume     Int      @default(50)
+  updatedAt  DateTime @updatedAt
+  device     Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+}
+
+model DeviceWidget {
+  id         String   @id @default(uuid())
+  deviceId   String
+  key        String
+  enabled    Boolean  @default(true)
+  config     Json?
+  orderIndex Int      @default(0)
+  device     Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  @@unique([deviceId, key])
+}
+
+model Session {
+  id               String   @id @default(uuid())
+  userId           String
+  refreshTokenHash String
+  ip               String?
+  userAgent        String?
+  expiresAt        DateTime
+  createdAt        DateTime @default(now())
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Audit {
+  id        String   @id @default(uuid())
+  userId    String?
+  deviceId  String?
+  type      String
+  payload   Json?
+  createdAt DateTime @default(now())
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  device    Device?  @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  @@index([userId])
+  @@index([deviceId])
+  @@index([type, createdAt])
+}
