@@ -11,6 +11,7 @@ import health from "./routes/health";
 import auth from "./routes/auth";
 import devices from "./routes/devices";
 import control from "./routes/control";
+import publicRoutes from "./routes/public";
 import { setupRealtime } from "./realtime";
 
 
@@ -29,7 +30,9 @@ async function start() {
         scope.register(health);
         scope.register(auth);
         scope.register(devices);
-        scope.register(control);// /api/v1/devices...
+        scope.register(control);
+
+        scope.register(publicRoutes, { prefix: '/public' });
     }, { prefix: "/api/v1" });
 
     // IMPORTANT: brancher le temps réel AVANT d'appeler listen()
