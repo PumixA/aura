@@ -11,7 +11,9 @@ import health from "./routes/health";
 import auth from "./routes/auth";
 import devices from "./routes/devices";
 import control from "./routes/control";
+import meRoutes from './routes/me'
 import publicRoutes from "./routes/public";
+import { registerAuthHook } from "./routes/_auth-helpers";
 import { setupRealtime } from "./realtime";
 
 
@@ -20,6 +22,7 @@ const app = Fastify({ logger: true });
 async function start() {
     await app.register(cors, { origin: true });
     await app.register(jwt, { secret: process.env.JWT_SECRET! });
+    registerAuthHook(app);
     await app.register(swagger, {
         openapi: { info: { title: "Aura API", version: "1.0.0" } }
     });
@@ -31,11 +34,11 @@ async function start() {
         scope.register(auth);
         scope.register(devices);
         scope.register(control);
+        scope.register(meRoutes);
 
         scope.register(publicRoutes, { prefix: '/public' });
     }, { prefix: "/api/v1" });
 
-    // IMPORTANT: brancher le temps réel AVANT d'appeler listen()
     setupRealtime(app);
 
     const port = Number(process.env.PORT || 3000);
