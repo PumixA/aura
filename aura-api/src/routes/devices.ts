@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from "fastify";
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
 
+
 const devices: FastifyPluginAsync = async (app) => {
     // Toutes les routes ici nécessitent un JWT user
     const authGuard = async (req: any) => {
