@@ -1,135 +1,86 @@
-import type { FastifyPluginAsync } from "fastify";
-import crypto from "crypto";
-import bcrypt from "bcryptjs";
+import { FastifyPluginAsync } from 'fastify'
+import { z } from 'zod'
 
+const renameSchema = z.object({
+    name: z.string().min(1).max(100)
+})
 
-const devices: FastifyPluginAsync = async (app) => {
-    // Toutes les routes ici nécessitent un JWT user
-    const authGuard = async (req: any) => {
-        await req.jwtVerify();
-    };
+const devicesRoutes: FastifyPluginAsync = async (app) => {
+    const ensureOwnDevice = async (userId: string, deviceId: string) => {
+        const d = await app.prisma.device.findUnique({
+            where: { id: deviceId },
+            select: { ownerId: true, disabled: true }
+        })
+        if (!d) throw app.httpErrors.notFound('Device not found')
+        if (d.ownerId !== userId) throw app.httpErrors.forbidden('Not your device')
+        if (d.disabled) throw app.httpErrors.conflict('Device disabled')
+    }
 
-    const genApiKey = () => crypto.randomBytes(24).toString("base64url"); // ~32 chars, URL-safe
+    // PUT /devices/:deviceId  (rename)
+    app.put('/devices/:deviceId', { preHandler: app.authenticate }, async (req: any) => {
+        const { deviceId } = req.params as { deviceId: string }
+        const { name } = renameSchema.parse(req.body)
+        const userId = req.user.sub as string
 
-    // CREATE device → retourne la clé API EN CLAIR (une seule fois)
-    app.post(
-        "/devices",
-        {
-            onRequest: [authGuard],
-            schema: {
-                body: {
-                    type: "object",
-                    required: ["name"],
-                    properties: { name: { type: "string", minLength: 1 } },
-                },
-            },
-        },
-        async (req: any) => {
-            // ⚠️ ton JWT encode l'id user dans 'sub'
-            const userId = req.user.sub as string;
-            const { name } = req.body as { name: string };
+        await ensureOwnDevice(userId, deviceId)
 
-            const apiKey = genApiKey();
-            const apiKeyHash = await bcrypt.hash(apiKey, 12);
+        const device = await app.prisma.device.update({
+            where: { id: deviceId },
+            data: { name },
+            select: { id: true, name: true }
+        })
+        return { device }
+    })
 
-            const device = await (app as any).prisma.device.create({
+    // DELETE /devices/:deviceId  (hard delete)
+    app.delete('/devices/:deviceId', { preHandler: app.authenticate }, async (req: any, reply) => {
+        const { deviceId } = req.params as { deviceId: string }
+        const userId = req.user.sub as string
+        await ensureOwnDevice(userId, deviceId)
+
+        await app.prisma.$transaction(async (px) => {
+            const d = await px.device.findUnique({ where: { id: deviceId }, select: { id: true, name: true } })
+            await px.audit.create({
                 data: {
-                    name,
-                    ownerId: userId, // ✅ lie bien le device au créateur
-                    apiKeyHash,
-                },
-                select: { id: true, name: true },
-            });
+                    userId,
+                    type: 'DEVICE_DELETED',
+                    deviceId: null, // <-- pas de FK
+                    payload: { deletedDeviceId: d?.id, name: d?.name }
+                }
+            })
+            await px.device.delete({ where: { id: deviceId } })
+        })
 
-            return { device, apiKey }; // la clé API n’est renvoyée qu’ici
+        return reply.code(204).send()
+    })
+
+    // GET /devices/:deviceId/state  (snapshot global)
+    app.get('/devices/:deviceId/state', { preHandler: app.authenticate }, async (req: any) => {
+        const { deviceId } = req.params as { deviceId: string }
+        const userId = req.user.sub as string
+
+        await ensureOwnDevice(userId, deviceId)
+
+        const [led, music, widgets] = await Promise.all([
+            app.prisma.ledState.findUnique({ where: { deviceId } }),
+            app.prisma.musicState.findUnique({ where: { deviceId } }),
+            app.prisma.deviceWidget.findMany({
+                where: { deviceId },
+                select: { key: true, enabled: true, orderIndex: true, config: true },
+                orderBy: { orderIndex: 'asc' }
+            })
+        ])
+
+        return {
+            leds: led
+                ? { on: led.on, color: led.color, brightness: led.brightness, preset: led.preset ?? null }
+                : { on: false, color: '#FFFFFF', brightness: 50, preset: null },
+            music: music
+                ? { status: music.status, volume: music.volume, track: null }
+                : { status: 'pause', volume: 50, track: null },
+            widgets
         }
-    );
+    })
+}
 
-    // LIST mes devices (sans clé)
-    app.get(
-        "/devices",
-        { onRequest: [authGuard] },
-        async (req: any) => {
-            const userId = req.user.sub as string;
-            const list = await (app as any).prisma.device.findMany({
-                where: { ownerId: userId },
-                select: {
-                    id: true,
-                    name: true,
-                    createdAt: true,
-                    disabled: true,
-                    apiKeyHash: true,
-                },
-                orderBy: { createdAt: "desc" },
-            });
-            // on ne renvoie pas le hash, juste un indicateur
-            return list.map((d: any) => ({
-                id: d.id,
-                name: d.name,
-                createdAt: d.createdAt,
-                disabled: d.disabled,
-                hasApiKey: !!d.apiKeyHash,
-            }));
-        }
-    );
-
-    // ROTATE clé API → renvoie une NOUVELLE clé EN CLAIR (une seule fois)
-    app.post(
-        "/devices/:id/apikey/rotate",
-        { onRequest: [authGuard] },
-        async (req: any, rep) => {
-            const userId = req.user.sub as string;
-            const id = req.params.id as string;
-
-            const device = await (app as any).prisma.device.findUnique({ where: { id } });
-            if (!device || device.ownerId !== userId) {
-                return rep.code(404).send({ message: "Device introuvable" });
-            }
-
-            const apiKey = genApiKey();
-            const apiKeyHash = await bcrypt.hash(apiKey, 12);
-
-            await (app as any).prisma.device.update({
-                where: { id },
-                data: { apiKeyHash },
-            });
-
-            return { deviceId: id, apiKey }; // montrer la nouvelle clé une seule fois
-        }
-    );
-
-    // DISABLE / ENABLE device
-    app.post(
-        "/devices/:id/disable",
-        { onRequest: [authGuard] },
-        async (req: any, rep) => {
-            const userId = req.user.sub as string;
-            const id = req.params.id as string;
-
-            const device = await (app as any).prisma.device.findUnique({ where: { id } });
-            if (!device || device.ownerId !== userId) {
-                return rep.code(404).send({ message: "Device introuvable" });
-            }
-            await (app as any).prisma.device.update({ where: { id }, data: { disabled: true } });
-            return { ok: true };
-        }
-    );
-
-    app.post(
-        "/devices/:id/enable",
-        { onRequest: [authGuard] },
-        async (req: any, rep) => {
-            const userId = req.user.sub as string;
-            const id = req.params.id as string;
-
-            const device = await (app as any).prisma.device.findUnique({ where: { id } });
-            if (!device || device.ownerId !== userId) {
-                return rep.code(404).send({ message: "Device introuvable" });
-            }
-            await (app as any).prisma.device.update({ where: { id }, data: { disabled: false } });
-            return { ok: true };
-        }
-    );
-};
-
-export default devices;
+export default devicesRoutes
