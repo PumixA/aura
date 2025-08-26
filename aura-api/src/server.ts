@@ -4,6 +4,7 @@ import jwt from "@fastify/jwt";
 import swagger from "@fastify/swagger";
 import swaggerUI from "@fastify/swagger-ui";
 import dotenv from "dotenv";
+import sensible from '@fastify/sensible';
 dotenv.config();
 
 import prismaPlugin from "./plugins/prisma";
@@ -23,6 +24,7 @@ const app = Fastify({ logger: true });
 async function start() {
     await app.register(cors, { origin: true });
     await app.register(jwt, { secret: process.env.JWT_SECRET! });
+    await app.register(sensible);
     registerAuthHook(app);
     await app.register(swagger, {
         openapi: { info: { title: "Aura API", version: "1.0.0" } }
