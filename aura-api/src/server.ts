@@ -15,6 +15,8 @@ import control from "./routes/control";
 import meRoutes from './routes/me'
 import pairingRoutes from './routes/pairing';
 import publicRoutes from "./routes/public";
+import weatherRoutes from "./routes/weather";
+import auditAdminRoutes from './routes/audit_admin'
 import { registerAuthHook } from "./routes/_auth-helpers";
 import { setupRealtime } from "./realtime";
 
@@ -39,6 +41,8 @@ async function start() {
         scope.register(control);
         scope.register(meRoutes);
         scope.register(pairingRoutes);
+        scope.register(weatherRoutes);
+        scope.register(auditAdminRoutes)
 
         scope.register(publicRoutes, { prefix: '/public' });
     }, { prefix: "/api/v1" });
