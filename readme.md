@@ -1,14 +1,14 @@
 # Aura – Miroir connecté
 
-Système modulaire pour miroir connecté, composé de :
+Système modulaire pour miroir connecté, composé de :
 
-* **API Backend** (Node + Fastify + Prisma + JWT)
+* **API Backend** (Node + Fastify + Prisma + JWT + Swagger)
 * **Agent Matériel** (Python) — tourne sur Raspberry Pi (ou PC) et pilote LEDs/audio/BT
 * **UI Desktop** (Electron + React + Vite) — interface plein écran du miroir
 * **App Mobile** (Expo/React Native) — gestion du compte/appareils & pilotage
 * **Infra Docker** (PostgreSQL + Adminer, conteneur API optionnel)
 
-> Objectif examen : API + Mobile en priorité. Desktop et Agent finalisent la démo.
+> Objectif examen : API + Mobile en priorité. Desktop et Agent finalisent la démo.
 
 ---
 
@@ -33,14 +33,16 @@ Système modulaire pour miroir connecté, composé de :
 ## Architecture
 
 ```
+
 Mobile (Expo) ──► REST API ─┬─► Socket.IO /agent ► Agent (Pi)
 Desktop (Electron) ─────────┘
-                               └─► DB Postgres (Prisma)
+└─► DB Postgres (Prisma)
+
 ```
 
 * **Mobile & Desktop** : appellent l’API REST (auth JWT) et écoutent les états via WebSocket.
-* **API** : expose routes REST (auth, devices, leds/music…), et un hub **Socket.IO** (`/agent`).
-* **Agent** : daemon Python (Pi) qui s’auth via **ApiKey de device**, reçoit commandes (`leds:update`, `music:cmd`), exécute localement et renvoie `state:report`.
+* **API** : expose routes REST (auth, devices, leds/music, widgets, audits…), et un hub **Socket.IO** (`/agent`).
+* **Agent** : daemon Python (Pi) qui s’auth via **ApiKey de device**, reçoit commandes (`leds:update`, `music:cmd`, `widgets:update`), exécute localement et renvoie `state:report`.
 * **Base** : PostgreSQL, modèle Prisma.
 
 ---
@@ -48,6 +50,7 @@ Desktop (Electron) ─────────┘
 ## Structure du dépôt
 
 ```
+
 aura/
 ├─ aura-api/                 # Backend Node/Fastify/Prisma
 │  ├─ src/
@@ -55,38 +58,44 @@ aura/
 │  │  ├─ realtime.ts         # Socket.IO (/agent), auth ApiKey/JWT
 │  │  ├─ plugins/prisma.ts
 │  │  └─ routes/
-│  │     ├─ auth.ts          # register/login/refresh…
+│  │     ├─ auth.ts          # register/login/refresh/logout
+│  │     ├─ me.ts            # profil utilisateur + sessions
+│  │     ├─ devices.ts       # CRUD device + state global
+│  │     ├─ control.ts       # relais REST → Socket.IO (leds/music)
+│  │     ├─ pairing.ts       # pairing token & heartbeat agent
+│  │     ├─ weather.ts       # météo publique
+│  │     ├─ audit\_admin.ts   # audit & administration
 │  │     ├─ health.ts
-│  │     ├─ devices.ts       # CRUD device + génération/rotation ApiKey
-│  │     └─ control.ts       # (reco) relai REST -> Socket.IO (leds/music)
+│  │     └─ public.ts        # config publique (feature flags)
 │  └─ prisma/schema.prisma
 │
 ├─ agent/                    # Daemon Python (Pi)
-│  ├─ config.yaml            # api_url, device_id, api_key, …
+│  ├─ config.yaml            # api\_url, device\_id, api\_key, …
 │  ├─ main.py                # client Socket.IO + heartbeat
 │  └─ utils/
-│     ├─ leds.py             # stub (remplacer par driver rpi_ws281x)
+│     ├─ leds.py             # stub (remplacer par driver rpi\_ws281x)
 │     ├─ music.py            # stub
 │     └─ state.py            # snapshot d’état
 │
 └─ desktop/                  # UI Electron + React + Vite
-   ├─ electron/
-   │  ├─ main.cjs            # process principal Electron
-   │  └─ preload.cjs         # API exposée au renderer
-   ├─ src/
-   │  ├─ api/client.ts       # axios + JWT
-   │  ├─ socket.ts           # socket.io-client (auth via handshake.auth)
-   │  ├─ store/{auth,ui}.ts
-   │  ├─ components/{DevicePicker,LedPanel,MusicPanel}.tsx
-   │  ├─ pages/{Login,Dashboard}.tsx
-   │  ├─ App.tsx
-   │  └─ main.tsx
-   ├─ .env.development       # VITE_API_URL=http://127.0.0.1:3000
-   ├─ package.json
-   └─ vite.config.ts
-```
+├─ electron/
+│  ├─ main.cjs            # process principal Electron
+│  └─ preload.cjs         # API exposée au renderer
+├─ src/
+│  ├─ api/client.ts       # axios + JWT
+│  ├─ socket.ts           # socket.io-client (auth via handshake.auth)
+│  ├─ store/{auth,ui}.ts
+│  ├─ components/{DevicePicker,LedPanel,MusicPanel}.tsx
+│  ├─ pages/{Login,Dashboard}.tsx
+│  ├─ App.tsx
+│  └─ main.tsx
+├─ .env.development       # VITE\_API\_URL=[http://127.0.0.1:3000](http://127.0.0.1:3000)
+├─ package.json
+└─ vite.config.ts
 
-> L’app **mobile** (Expo) vit dans `mobile/` quand créée (non montrée ci‑dessus).
+````
+
+> L’app **mobile** (Expo) vit dans `mobile/` quand créée (non montrée ci-dessus).
 
 ---
 
@@ -126,7 +135,7 @@ volumes:
 YML
 
 docker compose up -d
-```
+````
 
 ### 2) API
 
@@ -205,7 +214,7 @@ npm run dev
 
 ## Backend API
 
-**Stack** : Fastify (TS), Prisma (Postgres), JWT, Swagger.
+**Stack** : Fastify (TS), Prisma (Postgres), JWT, Swagger (OpenAPI 3.0).
 
 ### Env (`aura-api/.env`)
 
@@ -231,45 +240,87 @@ npm run dev   # tsx watch src/server.ts
 
 ### Routes principales (REST)
 
-* `GET /api/v1/health` — statut API
-* **Auth**
+* **Health & Public**
 
-    * `POST /api/v1/auth/register` — inscription
-    * `POST /api/v1/auth/login` — connexion → `accessToken`
-    * `POST /api/v1/auth/refresh` — (si implémenté)
-* **Devices**
+    * `GET /api/v1/health` — statut API
+    * `GET /api/v1/public/config` — config publique & feature flags
 
-    * `POST /api/v1/devices` — crée un device **et renvoie la `apiKey` une seule fois**
-    * `GET /api/v1/devices` — liste mes devices (sans clé)
-    * `POST /api/v1/devices/:id/apikey/rotate` — régénère la clé (renvoyée une fois)
-    * `POST /api/v1/devices/:id/{disable|enable}` — désactiver/réactiver
-* **Contrôle (recommandé)**
+* **Auth & Sessions**
 
-    * `POST /api/v1/devices/:id/leds/state` — `{on,color,brightness}` → relai Socket.IO
-    * `POST /api/v1/devices/:id/music/cmd` — `{cmd,volume}` → relai Socket.IO
+    * `POST /api/v1/auth/register`
+    * `POST /api/v1/auth/login`
+    * `POST /api/v1/auth/refresh`
+    * `POST /api/v1/auth/logout`
+    * `GET /api/v1/me`
+    * `PUT /api/v1/me`
+    * `GET /api/v1/me/sessions`
+    * `DELETE /api/v1/me/sessions/:sessionId`
 
-> **Dev only** : `POST /__debug/emit` pour émettre un event brut vers un device.
+* **Devices (user)**
 
+    * `GET /api/v1/devices` — mes devices
+    * `POST /api/v1/devices/pair` — appairer un device avec token
+    * `PUT /api/v1/devices/:deviceId` — rename
+    * `DELETE /api/v1/devices/:deviceId` — suppression
+    * `GET /api/v1/devices/:deviceId/state` — snapshot global (leds, music, widgets)
+
+* **Pairing (agent)**
+
+    * `POST /api/v1/devices/:deviceId/pairing-token` — générer/rafraîchir un token de pairing
+    * `POST /api/v1/devices/:deviceId/heartbeat` — signal de vie (maj online/lastSeenAt)
+
+* **LEDs**
+
+    * `GET /api/v1/devices/:deviceId/leds`
+    * `POST /api/v1/devices/:deviceId/leds/state`
+    * `POST /api/v1/devices/:deviceId/leds/style`
+
+* **Music**
+
+    * `GET /api/v1/devices/:deviceId/music`
+    * `POST /api/v1/devices/:deviceId/music/cmd`
+    * `POST /api/v1/devices/:deviceId/music/volume`
+
+* **Widgets**
+
+    * `GET /api/v1/devices/:deviceId/widgets`
+    * `PUT /api/v1/devices/:deviceId/widgets`
+
+* **Weather**
+
+    * `GET /api/v1/weather?city=...`
+
+* **Audits & Admin**
+
+    * `GET /api/v1/audits?deviceId=&type=&limit=`
+    * `GET /api/v1/admin/devices`
+    * `GET /api/v1/admin/users`
+    * `POST /api/v1/admin/devices/:id/revoke`
+
+> Swagger complet : [http://127.0.0.1:3000/docs](http://127.0.0.1:3000/docs)
+
+````
+```markdown
 ---
-
 ## Temps réel (SocketIO)
 
 * **Path** : `/socket.io`
 * **Namespace** : `/agent`
 * **Rooms** : `deviceId`
 * **Authentification** :
+  * **Agent** : header `Authorization: ApiKey <clé>` + `x-device-id: <deviceId>`
+  * **UI (Desktop/Mobile)** : JWT via `handshake.auth.token = "Bearer <JWT>"` ou header
 
-    * **Agent** : header `Authorization: ApiKey <clé>` (+ `x-device-id: <deviceId>`)
-    * **UI (Desktop/Mobile web)** : **JWT** via `handshake.auth.token = "Bearer <JWT>"` (ou header)
+**Événements gérés** :
 
-**Événements** :
-
-* `leds:update` → `{ deviceId, on, color, brightness, preset? }`
-* `music:cmd` → `{ deviceId, cmd: "play"|"pause"|"next"|"prev", volume? }`
-* `widgets:update` → `{ deviceId, widgets: {...} }`
-* `state:report` (agent → serveur) → `{ deviceId, state: {...} }`
-* `agent:ack` (serveur → UIs) — confirmation d’exécution
-* `ui:join` (UI → serveur) → joindre la room d’un `deviceId`
+* `agent:register` — agent s’identifie
+* `ui:join` — UI rejoint un deviceId
+* `ack` / `nack` — retour d’exécution
+* `state:report` (agent → serveur) → état actuel
+* `state:update` (serveur → UIs) — broadcast état vers clients
+* `leds:update` (serveur → agent) — commande LEDs
+* `music:cmd` (serveur → agent) — commande musique
+* `widgets:update` (serveur → agent) — maj widgets
 
 ---
 
@@ -283,12 +334,12 @@ npm run dev   # tsx watch src/server.ts
 cd aura/agent
 python3 -m venv .venv && source .venv/bin/activate
 pip install "python-socketio[client]" websocket-client requests PyYAML
-```
+````
 
 `config.yaml` :
 
 ```yaml
-api_url: "http://192.168.1.xxx:3000"   # IP de l’API
+api_url: "http://192.168.1.xxx:3000"
 ws_path: "/socket.io"
 namespace: "/agent"
 device_id: "ID_DEVICE"
@@ -335,7 +386,7 @@ sudo systemctl enable --now aura-agent
 journalctl -u aura-agent -f
 ```
 
-> Pour LEDs réelles : remplacer `utils/leds.py` par un driver `rpi_ws281x`.
+> Pour LEDs réelles : remplacer `utils/leds.py` par un driver `rpi_ws281x`.
 
 ---
 
@@ -355,10 +406,8 @@ npm run dev
 
 * Login (JWT)
 * Choisir un **device**
-* Contrôles LEDs/Musique
-* Reçoit `state:update` et `agent:ack` en temps réel
-
-> Auth WS : le renderer envoie le token via `auth: () => ({ token: "Bearer <JWT>" })`.
+* Contrôles LEDs/Musique/Widgets
+* Reçoit `state:update` et `agent:ack/nack` en temps réel
 
 ---
 
@@ -378,7 +427,6 @@ echo 'EXPO_PUBLIC_ENV=development' >> .env.development
 # dépendances clés
 npx expo install expo-secure-store
 npx expo install expo-barcode-scanner
-# (si QR pairing)
 ```
 
 **Démarrer** :
@@ -388,7 +436,7 @@ npm run start   # expo start -c
 ```
 
 * Scanner le QR avec **Expo Go** (Android) ou ouvrir sur iOS
-* Si web : prévoir un adaptateur SecureStore (fallback mémoire)
+* Si web : prévoir un adaptateur SecureStore (fallback mémoire)
 
 **Écrans visés** :
 
@@ -396,8 +444,6 @@ npm run start   # expo start -c
 * Dashboard (devices)
 * Device detail (LEDs, musique, widgets, météo)
 * Profil/Préférences
-
-> En prod mobile : ajouter Google Login (optionnel), et utiliser l’API REST `/devices/:id/...`.
 
 ---
 
@@ -425,9 +471,8 @@ CMD ["node", "dist/server.js"]
 Build & run :
 
 ```bash
-# build TS -> JS
 cd aura/aura-api
-npm run build  # tsc/tsx build selon ta config
+npm run build
 docker build -t aura-api:latest .
 docker run --rm -p 3000:3000 --env-file .env --network host aura-api:latest
 ```
@@ -436,13 +481,13 @@ docker run --rm -p 3000:3000 --env-file .env --network host aura-api:latest
 
 ### Desktop en prod
 
-* Builder l’UI (`npm run build:ui`) puis lancer `electron .` en mode prod, ou packager via `electron-builder` (AppImage/Deb).
-* Mode kiosk au boot : service systemd qui lance `npm run start`.
+* Builder l’UI (`npm run build:ui`) puis lancer `electron .` en mode prod
+* Mode kiosk au boot : service systemd qui lance `npm run start`
 
 ### Agent en prod
 
-* Voir **systemd** ci‑dessus.
-* Variables réseau stables (IP statique ou mDNS).
+* Voir **systemd** ci-dessus
+* Variables réseau stables (IP statique ou mDNS)
 
 ---
 
@@ -480,29 +525,33 @@ docker run --rm -p 3000:3000 --env-file .env --network host aura-api:latest
 
 ## Sécurité & prod checklist
 
-* [ ] **JWT\_SECRET** fort et stocké en secret (pas commité)
-* [ ] **CORS** et **origins Socket.IO** limités (pas `origin: true` en prod)
+* [ ] **JWT\_SECRET** fort et stocké en secret
+* [ ] **CORS** et **origins Socket.IO** limités
 * [ ] **/\_\_debug/emit** désactivé en prod
-* [ ] **Clés API devices** : jamais stockées en clair en DB (hash bcrypt), rotation possible
-* [ ] **TLS** (HTTPS) via proxy (Nginx/Caddy), **WebSocket** forward activé
+* [ ] \*\*Clés API
+
+
+devices\*\* : jamais stockées en clair (hash bcrypt)
+
+* [ ] **TLS** (HTTPS) via proxy
 * [ ] **Backups** réguliers de Postgres
-* [ ] **Logs** (Fastify logger, journalctl) + monitoring
-* [ ] **Prisma migrate deploy** au déploiement CI/CD
-* [ ] **Firewall** ouvert uniquement sur les ports nécessaires
-* [ ] **Rate limiting** (si public) et **headers sécurité** (proxy)
+* [ ] **Logs** + monitoring
+* [ ] **Prisma migrate deploy** au déploiement
+* [ ] **Firewall** strict
+* [ ] **Rate limiting** et **headers sécurité**
 
 ---
 
 ## Licence
 
-MIT (suggérée).
-
-> Tu peux ajouter un fichier `LICENSE` si tu souhaites cette licence.
+Aura | Delorme Melvin.
 
 ---
 
 ### Notes
 
-* Ce README suppose que tu as intégré : `realtime.ts` (Socket.IO), `devices.ts` (ApiKey par device), et **(recommandé)** `control.ts` (relais REST → WS).
+* `realtime.ts` gère les WS.
+* `devices.ts` gère ApiKey par device.
+* `control.ts` sert de relais REST → WS.
 * L’agent authentifie via **`Authorization: ApiKey <clé>`** + header `x-device-id`.
-* L’UI (Desktop/Mobile Web) transmet le JWT dans `handshake.auth.token`.
+* L’UI transmet le JWT via `handshake.auth.token`.
