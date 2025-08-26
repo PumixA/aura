@@ -1,0 +1,991 @@
+openapi: 3.0.3
+info:
+  title: Aura API
+  version: "1.0.0"
+  description: >
+    API Aura — Mobile ↔ API ↔ Agent (Miroir).
+    Auth côté utilisateur via **JWT Bearer**.
+    Auth côté agent via **ApiKey** + **x-device-id**.
+servers:
+  - url: http://127.0.0.1:3000/api/v1
+tags:
+  - name: Health
+  - name: Public
+  - name: Auth
+  - name: User
+  - name: Devices
+  - name: Pairing
+  - name: LEDs
+  - name: Music
+  - name: Widgets
+  - name: Weather
+  - name: Audits
+  - name: Admin
+  - name: Realtime
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 'Authorization: Bearer <JWT>'
+    apiKeyAgent:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: 'Authorization: ApiKey <CLE_DU_DEVICE>'
+    xDeviceId:
+      type: apiKey
+      in: header
+      name: x-device-id
+      description: 'UUID du device (agent)'
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+        message: { type: string }
+      example: { error: Unauthorized, message: Invalid credentials }
+
+    # ── Health & Public
+    HealthResponse:
+      type: object
+      required: [status, uptime]
+      properties:
+        status: { type: string, enum: [ok] }
+        uptime: { type: number }
+        version: { type: string, nullable: true }
+      example: { status: ok, uptime: 123.45, version: "1.0.0" }
+
+    PublicConfig:
+      type: object
+      required: [app, features]
+      properties:
+        app:
+          type: object
+          required: [minVersion]
+          properties:
+            minVersion: { type: string }
+        features:
+          type: object
+          required: [pairing, weather, debugEmit]
+          properties:
+            pairing: { type: boolean }
+            weather: { type: boolean }
+            debugEmit: { type: boolean }
+      example:
+        app: { minVersion: "0.1.0" }
+        features: { pairing: true, weather: true, debugEmit: false }
+
+    # ── Auth & Sessions
+    User:
+      type: object
+      required: [id, email]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        firstName: { type: string, nullable: true }
+        lastName: { type: string, nullable: true }
+      example:
+        id: 37bfce36-e569-46dd-b6b3-7f3c1b98c668
+        email: alice@example.com
+        firstName: Alice
+        lastName: Martin
+
+    UserPrefs:
+      type: object
+      properties:
+        theme: { type: string, enum: [light, dark] }
+        unitSystem: { type: string, enum: [metric, imperial] }
+        locale: { type: string }
+        widgetsOrder: {}
+      example: { theme: light, unitSystem: metric, locale: fr-FR, widgetsOrder: null }
+
+    AuthTokens:
+      type: object
+      required: [accessToken, refreshToken]
+      properties:
+        accessToken: { type: string }
+        refreshToken: { type: string }
+      example:
+        accessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        refreshToken: rfr_8s9d7f...example...
+
+    AuthRegisterBody:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8 }
+        firstName: { type: string }
+        lastName: { type: string }
+      example:
+        email: alice@example.com
+        password: SuperSecret#1
+        firstName: Alice
+        lastName: Martin
+
+    AuthRegisterResponse:
+      type: object
+      required: [user, tokens]
+      properties:
+        user: { $ref: '#/components/schemas/User' }
+        tokens: { $ref: '#/components/schemas/AuthTokens' }
+
+    AuthLoginBody:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8 }
+      example: { email: alice@example.com, password: SuperSecret#1 }
+
+    AuthLoginResponse:
+      type: object
+      required: [user, tokens]
+      properties:
+        user: { $ref: '#/components/schemas/User' }
+        tokens: { $ref: '#/components/schemas/AuthTokens' }
+
+    AuthRefreshBody:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken: { type: string }
+      example: { refreshToken: rfr_8s9d7f...example... }
+
+    AuthRefreshResponse:
+      type: object
+      required: [tokens]
+      properties:
+        tokens: { $ref: '#/components/schemas/AuthTokens' }
+
+    AuthLogoutBody:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken: { type: string }
+      example: { refreshToken: rfr_8s9d7f...example... }
+
+    SessionItem:
+      type: object
+      required: [id, device, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        device: { type: string, enum: [web, mobile, agent] }
+        createdAt: { type: string, format: date-time }
+        ip: { type: string, nullable: true }
+      example:
+        id: 9c2f2b2a-6d04-4a54-822b-7a3f2d9e1c5a
+        device: web
+        createdAt: 2025-08-27T18:05:00.000Z
+        ip: 192.168.1.10
+
+    # ── Devices (User)
+    DeviceListItem:
+      type: object
+      required: [id, name, createdAt, disabled]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        createdAt: { type: string, format: date-time }
+        disabled: { type: boolean }
+        online: { type: boolean, nullable: true }
+        lastSeenAt: { type: string, format: date-time, nullable: true }
+      example:
+        id: 89e81262-2101-4f6a-9969-40b81a18d929
+        name: Miroir Salon
+        createdAt: 2025-08-24T15:37:27.390Z
+        disabled: false
+        online: true
+        lastSeenAt: 2025-08-27T18:37:00.000Z
+
+    DeviceSimple:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+      example: { id: 89e81262-2101-4f6a-9969-40b81a18d929, name: Miroir Salon }
+
+    DevicePairBody:
+      type: object
+      required: [deviceId, pairingToken]
+      properties:
+        deviceId: { type: string, format: uuid }
+        pairingToken: { type: string, minLength: 4 }
+      example:
+        deviceId: 89e81262-2101-4f6a-9969-40b81a18d929
+        pairingToken: "123456"
+
+    DeviceRenameBody:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+      example: { name: Miroir Chambre }
+
+    # ── Pairing (Agent)
+    PairingTokenResponse:
+      type: object
+      required: [token, expiresAt]
+      properties:
+        token: { type: string }
+        expiresAt: { type: string, format: date-time }
+      example: { token: "123456", expiresAt: 2025-08-27T18:45:00.000Z }
+
+    HeartbeatBody:
+      type: object
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        metrics:
+          type: object
+          properties:
+            cpu: { type: number }
+            mem: { type: number }
+            temp: { type: number }
+      example: { status: ok, metrics: { cpu: 12.5, mem: 48.3, temp: 41.2 } }
+
+    # ── LEDs
+    LedState:
+      type: object
+      required: [on, color, brightness]
+      properties:
+        on: { type: boolean }
+        color: { type: string, pattern: '^#[0-9A-Fa-f]{6}$' }
+        brightness: { type: integer, minimum: 0, maximum: 100 }
+        preset: { type: string, nullable: true }
+      example: { on: true, color: "#00A3FF", brightness: 42, preset: ocean }
+
+    LedToggleBody:
+      type: object
+      required: [on]
+      properties:
+        on: { type: boolean }
+      example: { on: true }
+
+    LedStyleBody:
+      type: object
+      properties:
+        color: { type: string, pattern: '^#[0-9A-Fa-f]{6}$' }
+        brightness: { type: integer, minimum: 0, maximum: 100 }
+        preset: { type: string }
+      example: { color: "#00A3FF", brightness: 42, preset: ocean }
+
+    Accepted202:
+      type: object
+      required: [accepted]
+      properties:
+        accepted: { type: boolean }
+      example: { accepted: true }
+
+    # ── Music
+    MusicState:
+      type: object
+      required: [status, volume]
+      properties:
+        status: { type: string, enum: [play, pause] }
+        volume: { type: integer, minimum: 0, maximum: 100 }
+        track: { type: object, nullable: true }
+      example: { status: pause, volume: 50, track: null }
+
+    MusicCmdBody:
+      type: object
+      required: [action]
+      properties:
+        action: { type: string, enum: [play, pause, next, prev] }
+      example: { action: pause }
+
+    MusicVolumeBody:
+      type: object
+      required: [value]
+      properties:
+        value: { type: integer, minimum: 0, maximum: 100 }
+      example: { value: 35 }
+
+    # ── Widgets
+    WidgetItem:
+      type: object
+      required: [key, enabled, orderIndex]
+      properties:
+        key: { type: string, enum: [clock, weather, music, leds] }
+        enabled: { type: boolean }
+        orderIndex: { type: integer, minimum: 0 }
+        config: {}
+      example: { key: weather, enabled: true, orderIndex: 1, config: { city: Paris, units: metric } }
+
+    WidgetsList:
+      type: array
+      items: { $ref: '#/components/schemas/WidgetItem' }
+      example:
+        - { key: clock, enabled: true, orderIndex: 0, config: { format: "24h" } }
+        - { key: weather, enabled: true, orderIndex: 1, config: { city: Paris, units: metric } }
+        - { key: music, enabled: true, orderIndex: 2, config: {} }
+
+    WidgetsPutBody:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/WidgetItem' }
+      example:
+        items:
+          - { key: clock, enabled: true, orderIndex: 0, config: { format: "24h" } }
+          - { key: weather, enabled: true, orderIndex: 1, config: { city: Paris, units: metric } }
+
+    WidgetsPutResponse:
+      type: object
+      required: [items]
+      properties:
+        items: { $ref: '#/components/schemas/WidgetsList' }
+
+    # ── Weather
+    WeatherResponse:
+      type: object
+      required: [city, units, temp, desc, icon, updatedAt, ttlSec]
+      properties:
+        city: { type: string }
+        units: { type: string, enum: [metric, imperial] }
+        temp: { type: number }
+        desc: { type: string }
+        icon: { type: string }
+        updatedAt: { type: string, format: date-time }
+        ttlSec: { type: integer }
+      example:
+        city: Paris
+        units: metric
+        temp: 24.7
+        desc: cloudy
+        icon: cloud
+        updatedAt: 2025-08-27T18:40:00.000Z
+        ttlSec: 300
+
+    # ── Audits & Admin
+    AuditItem:
+      type: object
+      required: [id, type, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        userId: { type: string, format: uuid, nullable: true }
+        deviceId: { type: string, format: uuid, nullable: true }
+        type: { type: string }
+        payload: {}
+        createdAt: { type: string, format: date-time }
+      example:
+        id: a5f6b3b5-7e4b-4a6e-9a18-0d9a2b2b2a2f
+        userId: 37bfce36-e569-46dd-b6b3-7f3c1b98c668
+        deviceId: 89e81262-2101-4f6a-9969-40b81a18d929
+        type: DEVICE_PAIRED
+        payload: {}
+        createdAt: 2025-08-27T17:45:00.000Z
+
+    AdminDeviceItem:
+      type: object
+      required: [id, name, ownerId, disabled, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        ownerId: { type: string, format: uuid }
+        disabled: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        pairedAt: { type: string, format: date-time, nullable: true }
+
+    AdminUserItem:
+      type: object
+      required: [id, email, role, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        firstName: { type: string, nullable: true }
+        lastName: { type: string, nullable: true }
+        role: { type: string }
+        createdAt: { type: string, format: date-time }
+
+paths:
+  # 0) Health & Public
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthResponse' }
+
+  /public/config:
+    get:
+      tags: [Public]
+      summary: Public app config & feature flags
+      responses:
+        '200':
+          description: config public
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicConfig' }
+
+  # 1) Auth & Sessions
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AuthRegisterBody' }
+      responses:
+        '201':
+          description: created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthRegisterResponse' }
+        '409':
+          description: email conflict
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AuthLoginBody' }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthLoginResponse' }
+        '401':
+          description: invalid credentials
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Refresh access & refresh tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AuthRefreshBody' }
+      responses:
+        '200':
+          description: tokens rotated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthRefreshResponse' }
+        '401':
+          description: invalid or expired refresh
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout (revoke refresh)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AuthLogoutBody' }
+      responses:
+        '204':
+          description: no content
+
+  /me:
+    get:
+      tags: [User]
+      summary: Current user profile & prefs
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user, prefs]
+                properties:
+                  user: { $ref: '#/components/schemas/User' }
+                  prefs: { $ref: '#/components/schemas/UserPrefs' }
+    put:
+      tags: [User]
+      summary: Update profile & prefs
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                firstName: { type: string }
+                lastName: { type: string }
+                prefs: { $ref: '#/components/schemas/UserPrefs' }
+            example:
+              firstName: Alice
+              prefs: { theme: dark, unitSystem: metric, locale: fr-FR }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user, prefs]
+                properties:
+                  user: { $ref: '#/components/schemas/User' }
+                  prefs: { $ref: '#/components/schemas/UserPrefs' }
+
+  /me/sessions:
+    get:
+      tags: [User]
+      summary: List my sessions
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SessionItem' }
+
+  /me/sessions/{id}:
+    delete:
+      tags: [User]
+      summary: Revoke a session
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204':
+          description: no content
+
+  # 2) Devices (User)
+  /devices:
+    get:
+      tags: [Devices]
+      summary: List my devices
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/DeviceListItem' }
+
+  /devices/pair:
+    post:
+      tags: [Devices, Pairing]
+      summary: Pair a device with a short token
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DevicePairBody' }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [device]
+                properties:
+                  device: { $ref: '#/components/schemas/DeviceSimple' }
+        '400':
+          description: no active token
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '401':
+          description: invalid pairing token
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '409':
+          description: already paired or disabled
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '410':
+          description: token expired
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  /devices/{deviceId}:
+    put:
+      tags: [Devices]
+      summary: Rename device
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: deviceId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeviceRenameBody' }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [device]
+                properties:
+                  device: { $ref: '#/components/schemas/DeviceSimple' }
+    delete:
+      tags: [Devices]
+      summary: Delete device (hard delete)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: deviceId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204':
+          description: no content
+
+  /devices/{deviceId}/state:
+    get:
+      tags: [Devices]
+      summary: Device snapshot (leds, music, widgets)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: deviceId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [leds, music, widgets]
+                properties:
+                  leds: { $ref: '#/components/schemas/LedState' }
+                  music: { $ref: '#/components/schemas/MusicState' }
+                  widgets: { $ref: '#/components/schemas/WidgetsList' }
+
+  # 3) Pairing (Agent)
+  /devices/{deviceId}/pairing-token:
+    post:
+      tags: [Pairing]
+      summary: Generate pairing token (Agent)
+      security: [{ apiKeyAgent: [] }, { xDeviceId: [] }]
+      parameters:
+        - in: header
+          name: x-device-id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: path
+          name: deviceId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PairingTokenResponse' }
+
+  /devices/{deviceId}/heartbeat:
+    post:
+      tags: [Pairing]
+      summary: Heartbeat (Agent)
+      security: [{ apiKeyAgent: [] }, { xDeviceId: [] }]
+      parameters:
+        - in: header
+          name: x-device-id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: path
+          name: deviceId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HeartbeatBody' }
+      responses:
+        '204':
+          description: no content
+
+  # 4) LEDs
+  /devices/{id}/leds:
+    get:
+      tags: [LEDs]
+      summary: Get LEDs state
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LedState' }
+
+  /devices/{id}/leds/state:
+    post:
+      tags: [LEDs]
+      summary: Switch LEDs on/off
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LedToggleBody' }
+      responses:
+        '202':
+          description: accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Accepted202' }
+
+  /devices/{id}/leds/style:
+    post:
+      tags: [LEDs]
+      summary: Change color/brightness/preset
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LedStyleBody' }
+      responses:
+        '202':
+          description: accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Accepted202' }
+
+  # 5) Music
+  /devices/{id}/music:
+    get:
+      tags: [Music]
+      summary: Get music state
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MusicState' }
+
+  /devices/{id}/music/cmd:
+    post:
+      tags: [Music]
+      summary: Send music command
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MusicCmdBody' }
+      responses:
+        '202':
+          description: accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Accepted202' }
+
+  /devices/{id}/music/volume:
+    post:
+      tags: [Music]
+      summary: Set music volume
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MusicVolumeBody' }
+      responses:
+        '202':
+          description: accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Accepted202' }
+
+  # 6) Widgets
+  /devices/{deviceId}/widgets:
+    get:
+      tags: [Widgets]
+      summary: List device widgets
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: deviceId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WidgetsList' }
+    put:
+      tags: [Widgets]
+      summary: Upsert device widgets
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: deviceId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WidgetsPutBody' }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WidgetsPutResponse' }
+
+  # 7) Weather
+  /weather:
+    get:
+      tags: [Weather]
+      summary: Mock weather (5-min cache)
+      parameters:
+        - in: query
+          name: city
+          required: true
+          schema: { type: string, minLength: 1 }
+        - in: query
+          name: units
+          required: false
+          schema: { type: string, enum: [metric, imperial], default: metric }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WeatherResponse' }
+
+  # 8) Audits & Admin
+  /audits:
+    get:
+      tags: [Audits]
+      summary: List audits (user-scoped, admin gets all)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: deviceId
+          schema: { type: string, format: uuid }
+        - in: query
+          name: type
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AuditItem' }
+
+  /admin/devices:
+    get:
+      tags: [Admin]
+      summary: "Admin: list devices"
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AdminDeviceItem' }
+
+  /admin/users:
+    get:
+      tags: [Admin]
+      summary: "Admin: list users"
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AdminUserItem' }
+
+  /admin/devices/{id}/revoke:
+    post:
+      tags: [Admin]
+      summary: "Admin: revoke device (disable + clear ApiKey)"
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [device]
+                properties:
+                  device: { $ref: '#/components/schemas/DeviceSimple' }
