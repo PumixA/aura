@@ -65,13 +65,30 @@ export function setupRealtime(app: FastifyInstance) {
         })
 
         socket.on("ui:join", (msg) => {
-            // UI avec JWT appelle ceci pour écouter un device
             const devId = msg?.deviceId;
             if (typeof devId === "string" && devId) socket.join(devId);
         });
 
         socket.on("ack", (ack) => {
             if (ack?.deviceId) nsp.to(ack.deviceId).emit("agent:ack", ack)
+        })
+
+        socket.on("nack", async (msg) => {
+            if (msg?.deviceId) {
+                nsp.to(msg.deviceId).emit("agent:nack", msg)
+                // Optionnel : journaliser en Audit
+                try {
+                    await (app as any).prisma?.audit?.create({
+                        data: {
+                            deviceId: msg.deviceId,
+                            type: "AGENT_NACK",
+                            payload: msg
+                        }
+                    })
+                } catch (e) {
+                    app.log.warn("Audit nack failed: " + (e as Error).message)
+                }
+            }
         })
 
         socket.on("state:report", (msg) => {
