@@ -126,7 +126,6 @@ const devicesRoutes: FastifyPluginAsync = async (app) => {
         }
     })
 
-    // --- Widgets: schemas & helpers ---
     const AllowedWidgetKeys = ["clock","weather","music","leds"] as const
     const widgetItemSchema = z.object({
         key: z.enum(AllowedWidgetKeys),
@@ -151,7 +150,6 @@ const devicesRoutes: FastifyPluginAsync = async (app) => {
         io?.of("/agent").to(deviceId).emit(event, { deviceId, ...payload })
     }
 
-// --- GET /devices/:deviceId/widgets ---
     app.get('/devices/:deviceId/widgets', { preHandler: app.authenticate }, async (req: any) => {
         const { deviceId } = req.params as { deviceId: string }
         const userId = req.user.sub as string
@@ -161,7 +159,6 @@ const devicesRoutes: FastifyPluginAsync = async (app) => {
         return widgets
     })
 
-// --- PUT /devices/:deviceId/widgets ---
     app.put('/devices/:deviceId/widgets', { preHandler: app.authenticate }, async (req: any) => {
         const { deviceId } = req.params as { deviceId: string }
         const userId = req.user.sub as string
@@ -170,7 +167,6 @@ const devicesRoutes: FastifyPluginAsync = async (app) => {
         const { items } = putWidgetsSchema.parse(req.body)
 
         await app.prisma.$transaction(async (px) => {
-            // upsert pour chaque item fourni, on ne supprime rien qui n'est pas dans la liste
             for (const it of items) {
                 await px.deviceWidget.upsert({
                     where: { deviceId_key: { deviceId, key: it.key } },
@@ -195,9 +191,8 @@ const devicesRoutes: FastifyPluginAsync = async (app) => {
 
         const widgets = await getWidgetsList(app, deviceId)
 
-        // WS: notifier l'agent + les UIs
-        emitWs(app, deviceId, "widgets:update", { items })     // vers l'agent (payload demandé)
-        emitWs(app, deviceId, "state:update", { widgets })     // snapshot pour UIs
+        emitWs(app, deviceId, "widgets:update", { items })
+        emitWs(app, deviceId, "state:update", { widgets })
 
         return { items: widgets }
     })

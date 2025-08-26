@@ -1,15 +1,6 @@
-// src/plugins/auto-schemas.ts
 import type { FastifyPluginAsync } from "fastify";
 
-/**
- * Schémas réutilisables pour l'ensemble des routes Aura.
- * NB: Les $id sont pensés pour être utilisés via $ref: "<ID>#"
- * Exemple: response 200 -> { user: { $ref: "User#" }, prefs: { $ref: "UserPrefs#" } }
- */
 const schemas = [
-    // ─────────────────────────────────────────────────────────────────────────────
-    // 0) Health & Public
-    // ─────────────────────────────────────────────────────────────────────────────
     {
         $id: "HealthResponse",
         type: "object",
@@ -46,10 +37,6 @@ const schemas = [
             features: { pairing: true, weather: true, debugEmit: false }
         }
     },
-
-    // ─────────────────────────────────────────────────────────────────────────────
-    // 1) Auth & Sessions
-    // ─────────────────────────────────────────────────────────────────────────────
     {
         $id: "User",
         type: "object",
@@ -178,10 +165,6 @@ const schemas = [
         type: "array",
         items: { $ref: "SessionItem#" }
     },
-
-    // ─────────────────────────────────────────────────────────────────────────────
-    // 2) Devices (User)
-    // ─────────────────────────────────────────────────────────────────────────────
     {
         $id: "DeviceListItem",
         type: "object",
@@ -230,10 +213,6 @@ const schemas = [
         properties: { name: { type: "string", minLength: 1, maxLength: 100 } },
         example: { name: "Miroir Chambre" }
     },
-
-    // ─────────────────────────────────────────────────────────────────────────────
-    // 3) Pairing (Agent)
-    // ─────────────────────────────────────────────────────────────────────────────
     {
         $id: "PairingTokenResponse",
         type: "object",
@@ -260,10 +239,6 @@ const schemas = [
         },
         example: { status: "ok", metrics: { cpu: 12.5, mem: 48.3, temp: 41.2 } }
     },
-
-    // ─────────────────────────────────────────────────────────────────────────────
-    // 4) LEDs
-    // ─────────────────────────────────────────────────────────────────────────────
     {
         $id: "LedState",
         type: "object",
@@ -300,10 +275,6 @@ const schemas = [
         required: ["accepted"],
         example: { accepted: true }
     },
-
-    // ─────────────────────────────────────────────────────────────────────────────
-    // 5) Musique
-    // ─────────────────────────────────────────────────────────────────────────────
     {
         $id: "MusicState",
         type: "object",
@@ -329,10 +300,6 @@ const schemas = [
         properties: { value: { type: "integer", minimum: 0, maximum: 100 } },
         example: { value: 35 }
     },
-
-    // ─────────────────────────────────────────────────────────────────────────────
-    // 6) Widgets
-    // ─────────────────────────────────────────────────────────────────────────────
     {
         $id: "WidgetItem",
         type: "object",
@@ -379,10 +346,6 @@ const schemas = [
         properties: { items: { $ref: "WidgetsList#" } },
         required: ["items"]
     },
-
-    // ─────────────────────────────────────────────────────────────────────────────
-    // 7) Weather (mock)
-    // ─────────────────────────────────────────────────────────────────────────────
     {
         $id: "WeatherResponse",
         type: "object",
@@ -406,10 +369,6 @@ const schemas = [
             ttlSec: 300
         }
     },
-
-    // ─────────────────────────────────────────────────────────────────────────────
-    // 8) Audits & Admin
-    // ─────────────────────────────────────────────────────────────────────────────
     {
         $id: "AuditItem",
         type: "object",
@@ -482,10 +441,6 @@ const schemas = [
         required: ["device"],
         example: { device: { id: "89e81262-2101-4f6a-9969-40b81a18d929", name: "Miroir Salon" } }
     },
-
-    // ─────────────────────────────────────────────────────────────────────────────
-    // 9) Device Snapshot (global)
-    // ─────────────────────────────────────────────────────────────────────────────
     {
         $id: "DeviceState",
         type: "object",
@@ -511,7 +466,7 @@ const autoSchemas: FastifyPluginAsync = async (app) => {
         try {
             app.addSchema(s as any);
         } catch {
-            // ignore si déjà ajouté
+
         }
     }
 };

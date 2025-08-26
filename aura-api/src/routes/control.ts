@@ -52,8 +52,6 @@ const control: FastifyPluginAsync = async (app) => {
             : { status: "pause" as const, volume: 50, track: null };
     };
 
-    // ------- LEDs -------
-
     app.get("/devices/:id/leds", { onRequest: [authGuard] }, async (req: any) => {
         const deviceId = req.params.id as string;
         const userId = req.user.sub as string;
@@ -121,8 +119,6 @@ const control: FastifyPluginAsync = async (app) => {
 
         return rep.code(202).send({ accepted: true });
     });
-
-    // ------- Music -------
 
     app.get("/devices/:id/music", { onRequest: [authGuard] }, async (req: any) => {
         const deviceId = req.params.id as string;

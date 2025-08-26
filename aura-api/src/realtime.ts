@@ -76,7 +76,6 @@ export function setupRealtime(app: FastifyInstance) {
         socket.on("nack", async (msg) => {
             if (msg?.deviceId) {
                 nsp.to(msg.deviceId).emit("agent:nack", msg)
-                // Optionnel : journaliser en Audit
                 try {
                     await (app as any).prisma?.audit?.create({
                         data: {
@@ -96,7 +95,6 @@ export function setupRealtime(app: FastifyInstance) {
         })
     })
 
-    // DEV uniquement : émettre une commande vers un device
     app.post("/__debug/emit", {
         schema: {
             body: {

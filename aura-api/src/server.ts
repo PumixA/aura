@@ -30,13 +30,11 @@ async function start() {
     await app.register(jwt, { secret: process.env.JWT_SECRET! });
     await app.register(sensible);
 
-    // Garde ce plugin si tes routes utilisent des $ref (User#, etc.)
     await app.register(autoSchemas);
 
     await app.register(prismaPlugin);
     registerAuthHook(app);
 
-    // Swagger: charge le fichier openapi.yaml (mode "static")
     await app.register(swagger, {
         mode: "static",
         specification: {
@@ -50,7 +48,6 @@ async function start() {
         uiConfig: { docExpansion: "list", deepLinking: true }
     });
 
-    // Routes
     app.register(async (scope) => {
         scope.register(health);
         scope.register(auth);
@@ -63,7 +60,6 @@ async function start() {
         scope.register(publicRoutes, { prefix: "/public" });
     }, { prefix: "/api/v1" });
 
-    // Socket.IO
     setupRealtime(app);
 
     const port = Number(process.env.PORT || 3000);

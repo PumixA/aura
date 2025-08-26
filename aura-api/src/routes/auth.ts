@@ -27,7 +27,6 @@ const refreshSchema = z.object({
 });
 
 const authRoutes: FastifyPluginAsync = async (app) => {
-    // REGISTER
     app.post("/auth/register", async (req, reply) => {
         const body = registerSchema.parse(req.body);
 
@@ -42,7 +41,6 @@ const authRoutes: FastifyPluginAsync = async (app) => {
                 passwordHash,
                 firstName: body.firstName,
                 lastName: body.lastName,
-                // crée les prefs par défaut
                 prefs: { create: {} }
             },
             select: { id: true, email: true, firstName: true, lastName: true }
@@ -69,7 +67,6 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         });
     });
 
-    // LOGIN
     app.post("/auth/login", async (req, reply) => {
         const body = loginSchema.parse(req.body);
 
@@ -99,12 +96,10 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         return reply.send({ user, tokens: { accessToken, refreshToken } });
     });
 
-    // REFRESH
     app.post("/auth/refresh", async (req, reply) => {
         const { refreshToken } = refreshSchema.parse(req.body);
 
         const now = new Date();
-        // Simple et sûr pour v1: on parcourt les sessions non expirées
         const sessions = await app.prisma.session.findMany({
             where: { expiresAt: { gt: now } }
         });
@@ -123,7 +118,6 @@ const authRoutes: FastifyPluginAsync = async (app) => {
             return reply.code(401).send({ error: "Unauthorized", message: "Session no longer valid" });
         }
 
-        // Rotation du refresh: on invalide l’ancien, on recrée un nouveau
         await app.prisma.session.delete({ where: { id: matched.id } });
 
         const newRefresh = generateOpaqueToken();
@@ -145,7 +139,6 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         return reply.send({ tokens: { accessToken, refreshToken: newRefresh } });
     });
 
-    // LOGOUT
     app.post("/auth/logout", async (req, reply) => {
         const { refreshToken } = refreshSchema.parse(req.body);
 

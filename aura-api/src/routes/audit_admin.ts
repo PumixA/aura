@@ -16,12 +16,10 @@ const adminOnly = async (app: any, userId: string) => {
 const auditAdminRoutes: FastifyPluginAsync = async (app) => {
     const authGuard = async (req: any) => { await req.jwtVerify() }
 
-    // GET /audits?deviceId=&type=&limit=
     app.get('/audits', { preHandler: app.authenticate }, async (req: any) => {
         const userId = req.user.sub as string
         const q = auditsQuerySchema.parse(req.query)
 
-        // admin ?
         const me = await app.prisma.user.findUnique({ where: { id: userId }, select: { role: true } })
         const isAdmin = me?.role === 'admin'
 
@@ -29,7 +27,6 @@ const auditAdminRoutes: FastifyPluginAsync = async (app) => {
         if (q.deviceId) whereBase.deviceId = q.deviceId
         if (q.type) whereBase.type = q.type
 
-        // Si admin → tout (avec filtres). Sinon → restreint à mes devices / mes audits
         const where = isAdmin
             ? whereBase
             : {
@@ -37,8 +34,8 @@ const auditAdminRoutes: FastifyPluginAsync = async (app) => {
                     whereBase,
                     {
                         OR: [
-                            { userId },                           // actions faites par moi
-                            { device: { ownerId: userId } }       // ou liées à mes devices
+                            { userId },
+                            { device: { ownerId: userId } }
                         ]
                     }
                 ]
@@ -54,7 +51,6 @@ const auditAdminRoutes: FastifyPluginAsync = async (app) => {
         return items
     })
 
-    // GET /admin/devices  (admin only)
     app.get('/admin/devices', { preHandler: app.authenticate }, async (req: any) => {
         const userId = req.user.sub as string
         await adminOnly(app, userId)
@@ -69,7 +65,6 @@ const auditAdminRoutes: FastifyPluginAsync = async (app) => {
         return items
     })
 
-    // GET /admin/users  (admin only)
     app.get('/admin/users', { preHandler: app.authenticate }, async (req: any) => {
         const userId = req.user.sub as string
         await adminOnly(app, userId)
@@ -81,7 +76,6 @@ const auditAdminRoutes: FastifyPluginAsync = async (app) => {
         return items
     })
 
-    // POST /admin/devices/:id/revoke  (admin only)
     app.post('/admin/devices/:id/revoke', { preHandler: app.authenticate }, async (req: any) => {
         const userId = req.user.sub as string
         await adminOnly(app, userId)
