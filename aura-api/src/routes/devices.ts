@@ -125,6 +125,85 @@ const devicesRoutes: FastifyPluginAsync = async (app) => {
             widgets
         }
     })
+
+    // --- Widgets: schemas & helpers ---
+    const AllowedWidgetKeys = ["clock","weather","music","leds"] as const
+    const widgetItemSchema = z.object({
+        key: z.enum(AllowedWidgetKeys),
+        enabled: z.boolean().optional(),
+        orderIndex: z.number().int().min(0).optional(),
+        config: z.any().optional()
+    })
+    const putWidgetsSchema = z.object({
+        items: z.array(widgetItemSchema).min(1)
+    })
+
+    const getWidgetsList = async (app: any, deviceId: string) => {
+        return app.prisma.deviceWidget.findMany({
+            where: { deviceId },
+            select: { key: true, enabled: true, orderIndex: true, config: true },
+            orderBy: { orderIndex: 'asc' }
+        })
+    }
+
+    const emitWs = (app: any, deviceId: string, event: string, payload: any) => {
+        const io = (app as any).__io as import("socket.io").Server | undefined
+        io?.of("/agent").to(deviceId).emit(event, { deviceId, ...payload })
+    }
+
+// --- GET /devices/:deviceId/widgets ---
+    app.get('/devices/:deviceId/widgets', { preHandler: app.authenticate }, async (req: any) => {
+        const { deviceId } = req.params as { deviceId: string }
+        const userId = req.user.sub as string
+        await ensureOwnDevice(userId, deviceId)
+
+        const widgets = await getWidgetsList(app, deviceId)
+        return widgets
+    })
+
+// --- PUT /devices/:deviceId/widgets ---
+    app.put('/devices/:deviceId/widgets', { preHandler: app.authenticate }, async (req: any) => {
+        const { deviceId } = req.params as { deviceId: string }
+        const userId = req.user.sub as string
+        await ensureOwnDevice(userId, deviceId)
+
+        const { items } = putWidgetsSchema.parse(req.body)
+
+        await app.prisma.$transaction(async (px) => {
+            // upsert pour chaque item fourni, on ne supprime rien qui n'est pas dans la liste
+            for (const it of items) {
+                await px.deviceWidget.upsert({
+                    where: { deviceId_key: { deviceId, key: it.key } },
+                    update: {
+                        enabled: it.enabled ?? undefined,
+                        orderIndex: it.orderIndex ?? undefined,
+                        config: it.config ?? undefined
+                    },
+                    create: {
+                        deviceId,
+                        key: it.key,
+                        enabled: it.enabled ?? true,
+                        orderIndex: it.orderIndex ?? 0,
+                        config: it.config ?? undefined
+                    }
+                })
+            }
+            await px.audit.create({
+                data: { userId, deviceId, type: "WIDGETS_UPDATE", payload: { items } }
+            })
+        })
+
+        const widgets = await getWidgetsList(app, deviceId)
+
+        // WS: notifier l'agent + les UIs
+        emitWs(app, deviceId, "widgets:update", { items })     // vers l'agent (payload demandé)
+        emitWs(app, deviceId, "state:update", { widgets })     // snapshot pour UIs
+
+        return { items: widgets }
+    })
+
 }
+
+
 
 export default devicesRoutes
