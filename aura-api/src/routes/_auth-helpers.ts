@@ -16,7 +16,6 @@ export async function signAccessToken(app: FastifyInstance, payload: JWTPayload)
 }
 
 export function generateOpaqueToken() {
-    // Opaque (pas un JWT), aléatoire
     return crypto.randomBytes(48).toString('base64url')
 }
 
@@ -30,7 +29,6 @@ export async function verifyToken(token: string, hash: string) {
 }
 
 export function msToMillis(ttl: string) {
-    // Support "15m", "30d", "3600000"
     const m = ttl.match(/^(\d+)([smhd])$/)
     if (!m) return Number(ttl) || 0
     const n = Number(m[1]); const u = m[2] as 's'|'m'|'h'|'d'

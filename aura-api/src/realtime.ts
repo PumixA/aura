@@ -65,7 +65,6 @@ export function setupRealtime(app: FastifyInstance) {
         })
 
         socket.on("ui:join", (msg) => {
-            // UI avec JWT appelle ceci pour écouter un device
             const devId = msg?.deviceId;
             if (typeof devId === "string" && devId) socket.join(devId);
         });
@@ -74,12 +73,28 @@ export function setupRealtime(app: FastifyInstance) {
             if (ack?.deviceId) nsp.to(ack.deviceId).emit("agent:ack", ack)
         })
 
+        socket.on("nack", async (msg) => {
+            if (msg?.deviceId) {
+                nsp.to(msg.deviceId).emit("agent:nack", msg)
+                try {
+                    await (app as any).prisma?.audit?.create({
+                        data: {
+                            deviceId: msg.deviceId,
+                            type: "AGENT_NACK",
+                            payload: msg
+                        }
+                    })
+                } catch (e) {
+                    app.log.warn("Audit nack failed: " + (e as Error).message)
+                }
+            }
+        })
+
         socket.on("state:report", (msg) => {
             if (msg?.deviceId) nsp.to(msg.deviceId).emit("state:update", msg)
         })
     })
 
-    // DEV uniquement : émettre une commande vers un device
     app.post("/__debug/emit", {
         schema: {
             body: {

@@ -4,7 +4,9 @@ import jwt from "@fastify/jwt";
 import swagger from "@fastify/swagger";
 import swaggerUI from "@fastify/swagger-ui";
 import dotenv from "dotenv";
-import sensible from '@fastify/sensible';
+import sensible from "@fastify/sensible";
+import path from "path";
+
 dotenv.config();
 
 import prismaPlugin from "./plugins/prisma";
@@ -12,14 +14,14 @@ import health from "./routes/health";
 import auth from "./routes/auth";
 import devices from "./routes/devices";
 import control from "./routes/control";
-import meRoutes from './routes/me'
-import pairingRoutes from './routes/pairing';
+import meRoutes from "./routes/me";
+import pairingRoutes from "./routes/pairing";
 import publicRoutes from "./routes/public";
 import weatherRoutes from "./routes/weather";
-import auditAdminRoutes from './routes/audit_admin'
+import auditAdminRoutes from "./routes/audit_admin";
 import { registerAuthHook } from "./routes/_auth-helpers";
 import { setupRealtime } from "./realtime";
-
+import autoSchemas from "./plugins/auto-schemas";
 
 const app = Fastify({ logger: true });
 
@@ -27,12 +29,24 @@ async function start() {
     await app.register(cors, { origin: true });
     await app.register(jwt, { secret: process.env.JWT_SECRET! });
     await app.register(sensible);
-    registerAuthHook(app);
-    await app.register(swagger, {
-        openapi: { info: { title: "Aura API", version: "1.0.0" } }
-    });
-    await app.register(swaggerUI, { routePrefix: "/docs" });
+
+    await app.register(autoSchemas);
+
     await app.register(prismaPlugin);
+    registerAuthHook(app);
+
+    await app.register(swagger, {
+        mode: "static",
+        specification: {
+            path: path.join(process.cwd(), "openapi.yaml"),
+            baseDir: process.cwd()
+        }
+    });
+
+    await app.register(swaggerUI, {
+        routePrefix: "/docs",
+        uiConfig: { docExpansion: "list", deepLinking: true }
+    });
 
     app.register(async (scope) => {
         scope.register(health);
@@ -42,9 +56,8 @@ async function start() {
         scope.register(meRoutes);
         scope.register(pairingRoutes);
         scope.register(weatherRoutes);
-        scope.register(auditAdminRoutes)
-
-        scope.register(publicRoutes, { prefix: '/public' });
+        scope.register(auditAdminRoutes);
+        scope.register(publicRoutes, { prefix: "/public" });
     }, { prefix: "/api/v1" });
 
     setupRealtime(app);
