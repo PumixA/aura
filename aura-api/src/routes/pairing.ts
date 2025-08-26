@@ -1,35 +1,29 @@
 import { FastifyPluginAsync } from 'fastify'
-import bcrypt from 'bcrypt'
-import crypto from 'crypto'
+import bcrypt from 'bcryptjs'
 
 const pairingRoutes: FastifyPluginAsync = async (app) => {
-    // Vérification ApiKey agent
     const verifyAgentAuth = async (deviceId: string, headers: any) => {
         const auth = headers['authorization'] as string | undefined
-        const deviceHdr = headers['x-device-id'] as string | undefined
-        if (!auth || !auth.startsWith('ApiKey ') || !deviceHdr) throw app.httpErrors.unauthorized('Missing ApiKey or x-device-id')
-        if (deviceHdr !== deviceId) throw app.httpErrors.forbidden('x-device-id mismatch')
+        const did = headers['x-device-id'] as string | undefined
+        if (!auth || !auth.startsWith('ApiKey ') || !did) throw app.httpErrors.unauthorized('Missing ApiKey or x-device-id')
+        if (did !== deviceId) throw app.httpErrors.forbidden('x-device-id mismatch')
 
-        const apiKey = auth.slice('ApiKey '.length)
-        const device = await app.prisma.device.findUnique({
-            where: { id: deviceId },
-            select: { apiKeyHash: true, disabled: true }
-        })
-        if (!device) throw app.httpErrors.notFound('Device not found')
-        if (!device.apiKeyHash) throw app.httpErrors.unauthorized('No ApiKey set for device')
-        if (device.disabled) throw app.httpErrors.conflict('Device disabled')
+        const apiKey = auth.slice('ApiKey '.length).trim()
+        const d = await app.prisma.device.findUnique({ where: { id: deviceId }, select: { apiKeyHash: true, disabled: true } })
+        if (!d) throw app.httpErrors.notFound('Device not found')
+        if (!d.apiKeyHash) throw app.httpErrors.unauthorized('No ApiKey set for device')
+        if (d.disabled) throw app.httpErrors.conflict('Device disabled')
 
-        const ok = await bcrypt.compare(apiKey, device.apiKeyHash)
+        const ok = await bcrypt.compare(apiKey, d.apiKeyHash)
         if (!ok) throw app.httpErrors.unauthorized('Invalid ApiKey')
     }
 
-    // POST /devices/:deviceId/pairing-token
     app.post('/devices/:deviceId/pairing-token', async (req: any) => {
         const { deviceId } = req.params as { deviceId: string }
         await verifyAgentAuth(deviceId, req.headers)
 
-        const token = crypto.randomInt(100000, 999999).toString()
-        const expiresAt = new Date(Date.now() + 2 * 60 * 1000) // 2 minutes TTL
+        const token = Math.floor(100000 + Math.random() * 900000).toString()
+        const expiresAt = new Date(Date.now() + 2 * 60 * 1000)
 
         await app.prisma.devicePairingToken.upsert({
             where: { deviceId },
@@ -40,33 +34,18 @@ const pairingRoutes: FastifyPluginAsync = async (app) => {
         return { token, expiresAt }
     })
 
-    // POST /devices/:deviceId/heartbeat
     app.post('/devices/:deviceId/heartbeat', async (req: any, reply) => {
         const { deviceId } = req.params as { deviceId: string }
         await verifyAgentAuth(deviceId, req.headers)
 
-        const body = req.body as {
-            status?: 'ok' | 'degraded'
-            metrics?: { cpu?: number; mem?: number; temp?: number }
-        }
-
-        await app.prisma.device.update({
-            where: { id: deviceId },
-            data: { /* champs pour lastSeen/online */
-                // ⚠️ ajoute dans le schéma si tu veux `lastSeenAt` / `online`
-                // exemple si champs déjà existants:
-                // lastSeenAt: new Date(),
-                // online: true
-            }
-        })
+        const body = (req.body ?? {}) as { status?: 'ok' | 'degraded'; metrics?: { cpu?: number; mem?: number; temp?: number } }
 
         await app.prisma.audit.create({
-            data: {
-                deviceId,
-                type: 'DEVICE_HEARTBEAT',
-                payload: body
-            }
+            data: { deviceId, type: 'DEVICE_HEARTBEAT', payload: body }
         })
+
+        const io = (app as any).__io as import('socket.io').Server | undefined
+        io?.of('/agent').to(deviceId).emit('agent:heartbeat', { deviceId, ...body })
 
         return reply.code(204).send()
     })
