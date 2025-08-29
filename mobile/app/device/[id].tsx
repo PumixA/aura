@@ -45,6 +45,11 @@ export default function DeviceDetail() {
     const weatherLoading = useDeviceState((s) => s.byId[deviceId]?.weatherLoading);
     const weatherError = useDeviceState((s) => s.byId[deviceId]?.weatherError);
 
+    // Realtime
+    const openSocket = useDeviceState((s) => s.openSocket);
+    const closeSocket = useDeviceState((s) => s.closeSocket);
+    const wsStatus = useDeviceState((s) => s.byId[deviceId]?.wsStatus);
+
     const devices = useDevices((s) => s.items);
     const refreshDevices = useDevices((s) => s.fetchDevices);
     const deviceMeta = useMemo(() => devices.find(d => d.id === deviceId), [devices, deviceId]);
@@ -62,9 +67,18 @@ export default function DeviceDetail() {
         (weatherWidget?.config?.city as string) || 'Paris'
     );
 
+    // Ouvre le socket après chargement initial du snapshot, ferme au unmount
     useEffect(() => {
-        fetchSnapshot(deviceId);
-    }, [deviceId, fetchSnapshot]);
+        let mounted = true;
+        (async () => {
+            await fetchSnapshot(deviceId);
+            if (mounted) openSocket(deviceId);
+        })();
+        return () => {
+            mounted = false;
+            closeSocket(deviceId);
+        };
+    }, [deviceId, fetchSnapshot, openSocket, closeSocket]);
 
     useEffect(() => {
         if (deviceMeta?.name) setNewName(deviceMeta.name);
@@ -74,14 +88,14 @@ export default function DeviceDetail() {
         if (snapshot?.leds?.color) setColorText(snapshot.leds.color);
     }, [snapshot?.leds?.color]);
 
-    // sync widgets draft when snapshot changes
+    // sync widgets draft quand le snapshot change
     useEffect(() => {
         if (snapshot?.widgets) {
             const sorted = [...snapshot.widgets].sort((a,b)=>a.orderIndex-b.orderIndex);
             setWidgetsDraft(sorted);
             const ww = sorted.find(w => w.key === 'weather');
             if (ww?.config?.city) setWeatherCity(String(ww.config.city));
-            // auto-fetch weather if enabled
+            // auto-fetch weather si activé
             if (ww?.enabled && (ww?.config?.city as string | undefined)) {
                 fetchWeather(String(ww.config.city), 'metric', deviceId);
             }
@@ -268,6 +282,35 @@ export default function DeviceDetail() {
     return (
         <View style={{ flex: 1 }}>
             <Stack.Screen options={{ title: Title, headerShown: true }} />
+
+            {/* Bandeau statut WebSocket */}
+            {wsStatus && (
+                <View
+                    style={{
+                        paddingHorizontal: 12,
+                        paddingVertical: 6,
+                        backgroundColor:
+                            wsStatus === 'connected' ? '#e8f7ed'
+                                : wsStatus === 'connecting' ? '#fff6e5'
+                                    : '#fde8e8',
+                        alignItems: 'center'
+                    }}
+                >
+                    <Text
+                        style={{
+                            color:
+                                wsStatus === 'connected' ? '#166534'
+                                    : wsStatus === 'connecting' ? '#92400e'
+                                        : '#991b1b',
+                            fontWeight: '700'
+                        }}
+                    >
+                        {wsStatus === 'connected' ? 'Connecté au miroir (temps réel)'
+                            : wsStatus === 'connecting' ? 'Connexion en cours…'
+                                : 'Hors ligne (reconnexion auto)'}
+                    </Text>
+                </View>
+            )}
 
             {loading && !snapshot ? (
                 <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>

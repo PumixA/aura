@@ -1,6 +1,8 @@
 // src/store/deviceState.ts
 import { create } from 'zustand';
 import { api } from '../api/client';
+import { createDeviceSocket, DeviceSocket } from '../api/socket';
+import { useAuth } from '../store/auth';
 
 export type LedState = {
     on: boolean;
@@ -32,6 +34,8 @@ type PerDevice = {
     data?: DeviceSnapshot;
     loading: boolean;
     error?: string | null;
+
+    // météo (optionnel)
     weather?: {
         city: string;
         units: 'metric' | 'imperial';
@@ -43,10 +47,16 @@ type PerDevice = {
     } | null;
     weatherLoading?: boolean;
     weatherError?: string | null;
+
+    // realtime
+    wsStatus?: 'disconnected' | 'connecting' | 'connected';
+    wsError?: string | null;
+    _socket?: DeviceSocket | null;
 };
 
 interface DeviceStateStore {
     byId: Record<string, PerDevice>;
+
     fetchSnapshot: (deviceId: string) => Promise<void>;
     renameDevice: (deviceId: string, name: string) => Promise<{ id: string; name: string }>;
     deleteDevice: (deviceId: string) => Promise<void>;
@@ -64,17 +74,33 @@ interface DeviceStateStore {
 
     // Weather
     fetchWeather: (city: string, units?: 'metric' | 'imperial', deviceIdForCache?: string) => Promise<void>;
+
+    // Realtime
+    openSocket: (deviceId: string) => void;
+    closeSocket: (deviceId: string) => void;
 }
 
 export const useDeviceState = create<DeviceStateStore>((set, get) => ({
     byId: {},
 
+    // ───────────────── fetch snapshot
     fetchSnapshot: async (deviceId: string) => {
         const cur = get().byId[deviceId] ?? { loading: false };
         set({ byId: { ...get().byId, [deviceId]: { ...cur, loading: true, error: null } } });
         try {
             const { data } = await api.get<DeviceSnapshot>(`/devices/${deviceId}/state`);
-            set({ byId: { ...get().byId, [deviceId]: { ...get().byId[deviceId], data, loading: false, error: null } } });
+            set({
+                byId: {
+                    ...get().byId,
+                    [deviceId]: {
+                        ...get().byId[deviceId],
+                        data,
+                        loading: false,
+                        error: null,
+                        wsStatus: get().byId[deviceId]?.wsStatus ?? 'disconnected',
+                    },
+                },
+            });
         } catch (e: any) {
             set({ byId: { ...get().byId, [deviceId]: { ...cur, loading: false, error: 'Impossible de charger le snapshot.' } } });
         }
@@ -86,10 +112,15 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
     },
 
     deleteDevice: async (deviceId) => {
+        // ferme socket avant suppression
+        get().closeSocket(deviceId);
         await api.delete(`/devices/${deviceId}`);
+        const copy = { ...get().byId };
+        delete copy[deviceId];
+        set({ byId: copy });
     },
 
-    // ─── LEDs: toggle on/off (optimiste + rollback)
+    // ─── LEDs
     ledsToggle: async (deviceId, on) => {
         const state = get();
         const prev = state.byId[deviceId]?.data;
@@ -106,7 +137,6 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
         }
     },
 
-    // ─── LEDs: style (optimiste + rollback)
     ledsStyle: async (deviceId, patch) => {
         const state = get();
         const prev = state.byId[deviceId]?.data;
@@ -129,7 +159,7 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
         }
     },
 
-    // ─── Music: commandes
+    // ─── Music
     musicCmd: async (deviceId, action) => {
         const state = get();
         const prev = state.byId[deviceId]?.data;
@@ -150,7 +180,6 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
         }
     },
 
-    // ─── Music: volume
     musicSetVolume: async (deviceId, value) => {
         const state = get();
         const prev = state.byId[deviceId]?.data;
@@ -168,7 +197,7 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
         }
     },
 
-    // ─── Widgets: PUT items complets (optimiste + rollback simple)
+    // ─── Widgets
     widgetsPut: async (deviceId, items) => {
         const state = get();
         const prev = state.byId[deviceId]?.data;
@@ -188,7 +217,7 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
         }
     },
 
-    // ─── Weather: GET /weather?city=...
+    // ─── Weather
     fetchWeather: async (city, units = 'metric', deviceIdForCache) => {
         const key = deviceIdForCache ?? '__global__';
         const cur = get().byId[key] ?? { loading: false };
@@ -199,5 +228,62 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
         } catch (e) {
             set({ byId: { ...get().byId, [key]: { ...get().byId[key], weatherLoading: false, weatherError: 'Météo indisponible.' } } });
         }
+    },
+
+    // ─── Realtime
+    openSocket: (deviceId) => {
+        const st = get();
+        const per = st.byId[deviceId] ?? {};
+        if (per._socket) return; // déjà ouvert
+
+        const token = useAuth.getState().accessToken;
+        if (!token) {
+            set({ byId: { ...st.byId, [deviceId]: { ...per, wsStatus: 'disconnected', wsError: 'NO_TOKEN' } } });
+            return;
+        }
+
+        const sock = createDeviceSocket(token);
+
+        // états
+        set({ byId: { ...st.byId, [deviceId]: { ...per, _socket: sock, wsStatus: 'connecting', wsError: null } } });
+
+        sock.on('connect', () => {
+            // rejoindre la room deviceId
+            sock.emit('ui:join', { deviceId });
+            set({ byId: { ...get().byId, [deviceId]: { ...get().byId[deviceId], wsStatus: 'connected', wsError: null } } });
+        });
+
+        sock.on('connect_error', (err: any) => {
+            set({ byId: { ...get().byId, [deviceId]: { ...get().byId[deviceId], wsStatus: 'disconnected', wsError: String(err?.message || err) } } });
+        });
+
+        sock.on('disconnect', () => {
+            set({ byId: { ...get().byId, [deviceId]: { ...get().byId[deviceId], wsStatus: 'disconnected' } } });
+        });
+
+        // merge patch: { leds? music? widgets? }
+        sock.on('state:update', (payload: any) => {
+            const cur = get().byId[deviceId]?.data;
+            if (!cur) return;
+            const next: DeviceSnapshot = {
+                leds: payload.leds ? { ...cur.leds, ...payload.leds } : cur.leds,
+                music: payload.music ? { ...cur.music, ...payload.music } : cur.music,
+                widgets: payload.widgets ? payload.widgets.slice().sort((a:any,b:any)=>a.orderIndex-b.orderIndex) : cur.widgets,
+            };
+            set({ byId: { ...get().byId, [deviceId]: { ...get().byId[deviceId], data: next } } });
+        });
+
+        // (facultatif) log ack/nack
+        sock.on('ack', () => {});
+        sock.on('nack', () => {});
+    },
+
+    closeSocket: (deviceId) => {
+        const st = get();
+        const per = st.byId[deviceId];
+        if (per?._socket) {
+            try { per._socket.disconnect(); } catch {}
+        }
+        set({ byId: { ...st.byId, [deviceId]: { ...per, _socket: null, wsStatus: 'disconnected' } } });
     },
 }));
