@@ -21,6 +21,30 @@ const devicesRoutes: FastifyPluginAsync = async (app) => {
         if (d.disabled) throw app.httpErrors.conflict('Device disabled')
     }
 
+    app.get('/devices', { preHandler: app.authenticate }, async (req: any) => {
+        const userId = req.user.sub as string
+
+        const devices = await app.prisma.device.findMany({
+            where: { ownerId: userId },
+            select: {
+                id: true,
+                name: true,
+                createdAt: true,
+                disabled: true
+            },
+            orderBy: { createdAt: 'asc' }
+        })
+
+        return devices.map(d => ({
+            id: d.id,
+            name: d.name,
+            createdAt: d.createdAt,
+            disabled: d.disabled,
+            online: null as boolean | null,
+            lastSeenAt: null as Date | null
+        }))
+    })
+
     app.post('/devices/pair', { preHandler: app.authenticate }, async (req: any, reply) => {
         const { deviceId, pairingToken } = pairSchema.parse(req.body)
         const userId = req.user.sub as string
@@ -198,7 +222,5 @@ const devicesRoutes: FastifyPluginAsync = async (app) => {
     })
 
 }
-
-
 
 export default devicesRoutes
