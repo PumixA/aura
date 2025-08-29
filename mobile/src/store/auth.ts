@@ -1,57 +1,95 @@
-import { create } from 'zustand'
-import * as SecureStore from 'expo-secure-store'
-import { api } from '../api/client'
+// src/store/auth.ts
+import { create } from 'zustand';
+import { api } from '../api/client';
+import { saveTokens, clearTokens, loadTokens } from '../lib/token';
 
-type User = { id: string; email: string; firstName?: string; lastName?: string }
-type AuthState = {
-    user: User | null
-    loading: boolean
-    login: (email: string, password: string) => Promise<void>
-    register: (p: { email: string; password: string; firstName?: string; lastName?: string }) => Promise<void>
-    logout: () => Promise<void>
-    hydrate: () => Promise<void>
+export type User = {
+    id: string;
+    email: string;
+    firstName?: string | null;
+    lastName?: string | null;
+};
+export type UserPrefs = {
+    theme?: 'light' | 'dark';
+    unitSystem?: 'metric' | 'imperial';
+    locale?: string | null;
+};
+
+interface AuthState {
+    user: User | null;
+    prefs: UserPrefs | null;
+    loading: boolean;
+    initialized: boolean;
+    init: () => Promise<void>;
+    login: (email: string, password: string) => Promise<void>;
+    register: (payload: {
+        email: string;
+        password: string;
+        firstName?: string;
+        lastName?: string;
+    }) => Promise<void>;
+    fetchMe: () => Promise<void>;
+    logout: () => Promise<void>;
 }
 
 export const useAuth = create<AuthState>((set) => ({
     user: null,
+    prefs: null,
     loading: false,
-    hydrate: async () => {
-        set({ loading: true })
+    initialized: false,
+
+    init: async () => {
+        set({ loading: true });
+        await loadTokens();
         try {
-            const { data } = await api.get('/me')
-            set({ user: data })
+            await useAuth.getState().fetchMe();
         } catch {
-            set({ user: null })
+            // ignore
         } finally {
-            set({ loading: false })
+            set({ loading: false, initialized: true });
         }
     },
+
     login: async (email, password) => {
-        set({ loading: true })
+        set({ loading: true });
         try {
-            const { data } = await api.post('/auth/login', { email, password })
-            await SecureStore.setItemAsync('access_token', data.accessToken)
-            await SecureStore.setItemAsync('refresh_token', data.refreshToken ?? '')
-            const me = await api.get('/me')
-            set({ user: me.data })
+            const { data } = await api.post('/auth/login', { email, password });
+            const { tokens, user } = data;
+            await saveTokens(tokens);
+            set({ user });
+            await useAuth.getState().fetchMe();
         } finally {
-            set({ loading: false })
+            set({ loading: false });
         }
     },
+
     register: async (payload) => {
-        set({ loading: true })
+        set({ loading: true });
         try {
-            await api.post('/auth/register', payload)
+            const { data } = await api.post('/auth/register', payload);
+            const { tokens, user } = data;
+            await saveTokens(tokens);
+            set({ user });
+            await useAuth.getState().fetchMe();
         } finally {
-            set({ loading: false })
+            set({ loading: false });
         }
     },
+
+    fetchMe: async () => {
+        const { data } = await api.get('/me');
+        set({ user: data.user, prefs: data.prefs });
+    },
+
     logout: async () => {
         try {
-            await api.post('/auth/logout')
-        } catch {}
-        await SecureStore.deleteItemAsync('access_token')
-        await SecureStore.deleteItemAsync('refresh_token')
-        set({ user: null })
+            const tokens = await loadTokens();
+            if (tokens?.refreshToken) {
+                await api.post('/auth/logout', { refreshToken: tokens.refreshToken }).catch(() => {});
+            }
+        } finally {
+            await clearTokens();
+            set({ user: null, prefs: null });
+        }
     },
-}))
+}));
