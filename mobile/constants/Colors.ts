@@ -1,26 +1,35 @@
-/**
- * Below are the colors that are used in the app. The colors are defined in the light and dark mode.
- * There are many other ways to style your app. For example, [Nativewind](https://www.nativewind.dev/), [Tamagui](https://tamagui.dev/), [unistyles](https://reactnativeunistyles.vercel.app), etc.
- */
+// constants/Colors.ts
+const primary = {
+    50: '#f3f1ff',
+    100: '#e7e2ff',
+    200: '#cfc6ff',
+    300: '#b0a0ff',
+    400: '#927dff',
+    500: '#7a5af8', // base
+    600: '#6a48e8',
+    700: '#5a39cf',
+    800: '#4a2ea8',
+    900: '#3c2786',
+};
 
-const tintColorLight = '#0a7ea4';
-const tintColorDark = '#fff';
+export const Gradients = {
+    primary: ['#7A5AF8', '#4DA8F0'],
+    mint: ['#4DA8F0', '#7AF8D1'],
+};
 
-export const Colors = {
-  light: {
-    text: '#11181C',
-    background: '#fff',
-    tint: tintColorLight,
-    icon: '#687076',
-    tabIconDefault: '#687076',
-    tabIconSelected: tintColorLight,
-  },
-  dark: {
-    text: '#ECEDEE',
-    background: '#151718',
-    tint: tintColorDark,
-    icon: '#9BA1A6',
-    tabIconDefault: '#9BA1A6',
-    tabIconSelected: tintColorDark,
-  },
+export default {
+    light: {
+        text: '#0f1220',
+        background: '#F8F9FC',
+        card: 'rgba(255,255,255,0.72)',
+        border: 'rgba(15,18,32,0.08)',
+        primary: primary[500],
+    },
+    dark: {
+        text: '#ECEEF7',
+        background: '#0B0E15',
+        card: 'rgba(20,24,33,0.52)',
+        border: 'rgba(236,238,247,0.06)',
+        primary: primary[500],
+    },
 };
