@@ -1,19 +1,33 @@
-import { Text } from 'react-native'
-import { Screen, H1, Button } from '../../src/components/ui'
-import { useAuth } from '../../src/store/auth'
-import { router } from 'expo-router'
+// app/(tabs)/profile.tsx
+import React from 'react';
+import { View, Text, Pressable } from 'react-native';
+import { useAuth } from '../../src/store/auth';
+import { useRouter } from 'expo-router';
 
 export default function Profile() {
-    const user = useAuth((s) => s.user)
-    const logout = useAuth((s) => s.logout)
+    const user = useAuth((s) => s.user);
+    const logout = useAuth((s) => s.logout);
+    const router = useRouter();
+
+    async function onLogout() {
+        await logout();
+        router.replace('/(auth)/login');
+    }
 
     return (
-        <Screen>
-            <H1>Profil</H1>
-            <Text style={{ color: 'white', marginBottom: 12 }}>
-                {user ? `Connecté: ${user.email}` : 'Non connecté'}
-            </Text>
-            <Button title="Se déconnecter" onPress={async () => { await logout(); router.replace('/(auth)/login') }} />
-        </Screen>
-    )
+        <View style={{ flex: 1, padding: 20, gap: 12 }}>
+            <Text style={{ fontSize: 22, fontWeight: '800' }}>Mon compte</Text>
+            <Text style={{ marginTop: 8 }}>Email : {user?.email}</Text>
+            <Text>Nom : {user?.lastName ?? '—'}</Text>
+            <Text>Prénom : {user?.firstName ?? '—'}</Text>
+
+            <View style={{ height: 16 }} />
+            <Pressable
+                onPress={onLogout}
+                style={{ height: 52, borderRadius: 999, backgroundColor: '#7A5AF8', alignItems: 'center', justifyContent: 'center', marginTop: 12 }}
+            >
+                <Text style={{ color: 'white', fontWeight: '700' }}>Se déconnecter</Text>
+            </Pressable>
+        </View>
+    );
 }

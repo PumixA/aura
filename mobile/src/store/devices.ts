@@ -1,24 +1,37 @@
-import { create } from 'zustand'
-import { api } from '../api/client'
+// src/store/devices.ts
+import { create } from 'zustand';
+import { api } from '../api/client';
 
-export type Device = { id: string; name: string; createdAt: string }
+export type DeviceListItem = {
+    id: string;
+    name: string;
+    createdAt: string;
+    disabled: boolean;
+    online?: boolean | null;
+    lastSeenAt?: string | null;
+};
 
-type DevicesState = {
-    items: Device[]
-    loading: boolean
-    fetch: () => Promise<void>
+interface DevicesState {
+    items: DeviceListItem[];
+    loading: boolean;
+    error?: string | null;
+    fetchDevices: () => Promise<void>;
 }
 
 export const useDevices = create<DevicesState>((set) => ({
     items: [],
     loading: false,
-    fetch: async () => {
-        set({ loading: true })
+    error: null,
+
+    fetchDevices: async () => {
+        set({ loading: true, error: null });
         try {
-            const { data } = await api.get('/devices')
-            set({ items: data })
+            const { data } = await api.get<DeviceListItem[]>('/devices');
+            set({ items: data });
+        } catch (e: any) {
+            set({ error: 'Impossible de charger les appareils.' });
         } finally {
-            set({ loading: false })
+            set({ loading: false });
         }
     },
-}))
+}));

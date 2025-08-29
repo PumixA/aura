@@ -1,10 +1,18 @@
-import { Tabs } from 'expo-router'
+// app/(tabs)/_layout.tsx
+import { Tabs, Redirect } from 'expo-router';
+import { useAuth } from '../../src/store/auth';
 
 export default function TabsLayout() {
+    const initialized = useAuth((s) => s.initialized);
+    const user = useAuth((s) => s.user);
+
+    if (!initialized) return null;
+    if (!user) return <Redirect href="/(auth)/login" />;
+
     return (
-        <Tabs screenOptions={{ headerStyle: { backgroundColor: '#0b0f14' }, headerTintColor: 'white' }}>
-            <Tabs.Screen name="index" options={{ title: 'Mes appareils' }} />
+        <Tabs screenOptions={{ headerShown: true }}>
+            <Tabs.Screen name="index" options={{ title: 'Accueil' }} />
             <Tabs.Screen name="profile" options={{ title: 'Profil' }} />
         </Tabs>
-    )
+    );
 }
