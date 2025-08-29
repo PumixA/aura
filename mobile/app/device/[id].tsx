@@ -21,6 +21,20 @@ function isHex(value: string) {
     return /^#[0-9A-Fa-f]{6}$/.test(value.trim());
 }
 
+// >>> Même helper que dans (tabs)/index.tsx
+function formatAgo(iso?: string | null): string {
+    if (!iso) return 'jamais';
+    const t = new Date(iso).getTime();
+    const now = Date.now();
+    const sec = Math.max(0, Math.floor((now - t) / 1000));
+    if (sec < 5) return 'à l’instant';
+    if (sec < 60) return `il y a ${sec}s`;
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `il y a ${min} min`;
+    const h = Math.floor(min / 60);
+    return `il y a ${h} h`;
+}
+
 export default function DeviceDetail() {
     const router = useRouter();
     const params = useLocalSearchParams<{ id: string }>();
@@ -71,13 +85,23 @@ export default function DeviceDetail() {
         let mounted = true;
         (async () => {
             await fetchSnapshot(deviceId);
+            // On synchronise aussi la liste (qui porte online/lastSeenAt)
+            await refreshDevices();
             if (mounted) openSocket(deviceId);
         })();
         return () => {
             mounted = false;
             closeSocket(deviceId);
         };
-    }, [deviceId, fetchSnapshot, openSocket, closeSocket]);
+    }, [deviceId, fetchSnapshot, openSocket, closeSocket, refreshDevices]);
+
+    // Petit polling de la liste pour que online/lastSeenAt reste frais pendant qu'on est sur l'écran
+    useEffect(() => {
+        const id = setInterval(() => {
+            refreshDevices().catch(() => {});
+        }, 15000); // 15s
+        return () => clearInterval(id);
+    }, [refreshDevices]);
 
     useEffect(() => {
         if (deviceMeta?.name) setNewName(deviceMeta.name);
@@ -269,38 +293,16 @@ export default function DeviceDetail() {
         setWidgetsDraft(DEFAULT_WIDGETS);
     }
 
+    // Prépare le badge statut comme dans la liste
+    const statusText = deviceMeta?.online
+        ? 'En ligne'
+        : `Hors ligne • vu ${formatAgo(deviceMeta?.lastSeenAt)}`;
+    const statusColor = deviceMeta?.online ? '#166534' : '#991b1b';
+    const badgeBg = deviceMeta?.online ? '#e8f7ed' : '#fde8e8';
+
     return (
         <View style={{ flex: 1 }}>
             <Stack.Screen options={{ title: Title, headerShown: true }} />
-
-            {/* Bandeau statut WebSocket */}
-            {wsStatus && (
-                <View
-                    style={{
-                        paddingHorizontal: 12,
-                        paddingVertical: 6,
-                        backgroundColor:
-                            wsStatus === 'connected' ? '#e8f7ed' : wsStatus === 'connecting' ? '#fff6e5' : '#fde8e8',
-                        alignItems: 'center',
-                    }}
-                >
-                    <Text
-                        style={{
-                            color: wsStatus === 'connected' ? '#166534' : wsStatus === 'connecting' ? '#92400e' : '#991b1b',
-                            fontWeight: '700',
-                        }}
-                    >
-                        {wsStatus === 'connected'
-                            ? 'Connecté au miroir (temps réel)'
-                            : wsStatus === 'connecting'
-                                ? 'Connexion en cours…'
-                                : 'Hors ligne (reconnexion auto)'}
-                    </Text>
-                    <Text style={{ marginTop: 4, color: agentOnline ? '#166534' : '#991b1b', fontWeight: '700' }}>
-                        {`Agent ${agentOnline ? 'en ligne' : 'hors ligne'}`}
-                    </Text>
-                </View>
-            )}
 
             {loading && !snapshot ? (
                 <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
@@ -311,7 +313,7 @@ export default function DeviceDetail() {
                 <View style={{ flex: 1, padding: 20 }}>
                     <Text style={{ color: '#c00' }}>{error}</Text>
                     <Pressable
-                        onPress={() => fetchSnapshot(deviceId)}
+                        onPress={() => { fetchSnapshot(deviceId); refreshDevices(); }}
                         style={{
                             marginTop: 12,
                             height: 44,
@@ -339,9 +341,21 @@ export default function DeviceDetail() {
                         {!renaming ? (
                             <>
                                 <Text style={{ fontSize: 18, fontWeight: '800' }}>{deviceMeta?.name ?? 'Appareil'}</Text>
-                                <Text style={{ marginTop: 6, color: '#666' }}>
-                                    Statut : {agentOnline ? 'Agent en ligne' : 'Agent hors ligne'}
-                                </Text>
+
+                                {/* >>> Statut aligné sur la liste */}
+                                <View
+                                    style={{
+                                        marginTop: 6,
+                                        alignSelf: 'flex-start',
+                                        paddingHorizontal: 10,
+                                        paddingVertical: 4,
+                                        borderRadius: 999,
+                                        backgroundColor: badgeBg,
+                                    }}
+                                >
+                                    <Text style={{ color: statusColor, fontWeight: '700' }}>{statusText}</Text>
+                                </View>
+
                                 <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
                                     <Pressable
                                         onPress={() => setRenaming(true)}
@@ -830,7 +844,7 @@ export default function DeviceDetail() {
 
                     {/* Actions bas de page */}
                     <Pressable
-                        onPress={() => fetchSnapshot(deviceId)}
+                        onPress={() => { fetchSnapshot(deviceId); refreshDevices(); }}
                         style={{ height: 44, borderRadius: 12, backgroundColor: '#eef1ff', alignItems: 'center', justifyContent: 'center' }}
                     >
                         <Text style={{ color: '#5a39cf', fontWeight: '600' }}>Rafraîchir le snapshot</Text>
