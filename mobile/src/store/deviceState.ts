@@ -39,6 +39,10 @@ interface DeviceStateStore {
     fetchSnapshot: (deviceId: string) => Promise<void>;
     renameDevice: (deviceId: string, name: string) => Promise<{ id: string; name: string }>;
     deleteDevice: (deviceId: string) => Promise<void>;
+
+    // LEDs
+    ledsToggle: (deviceId: string, on: boolean) => Promise<void>;
+    ledsStyle: (deviceId: string, patch: Partial<Pick<LedState, 'color' | 'brightness' | 'preset'>>) => Promise<void>;
 }
 
 export const useDeviceState = create<DeviceStateStore>((set, get) => ({
@@ -62,5 +66,49 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
 
     deleteDevice: async (deviceId) => {
         await api.delete(`/devices/${deviceId}`);
+    },
+
+    // ─── LEDs: toggle on/off (optimiste + rollback)
+    ledsToggle: async (deviceId, on) => {
+        const state = get();
+        const prev = state.byId[deviceId]?.data;
+        if (!prev) return;
+
+        // optimistic
+        const optimistic: DeviceSnapshot = { ...prev, leds: { ...prev.leds, on } };
+        set({ byId: { ...state.byId, [deviceId]: { ...state.byId[deviceId], data: optimistic } } });
+
+        try {
+            await api.post(`/devices/${deviceId}/leds/state`, { on });
+            // ok, rien à faire (on garde optimiste)
+        } catch {
+            // rollback
+            set({ byId: { ...state.byId, [deviceId]: { ...state.byId[deviceId], data: prev } } });
+            throw new Error('LED_TOGGLE_FAILED');
+        }
+    },
+
+    // ─── LEDs: style (color/brightness/preset) (optimiste + rollback)
+    ledsStyle: async (deviceId, patch) => {
+        const state = get();
+        const prev = state.byId[deviceId]?.data;
+        if (!prev) return;
+
+        const nextLed: LedState = {
+            ...prev.leds,
+            color: patch.color ?? prev.leds.color,
+            brightness: patch.brightness ?? prev.leds.brightness,
+            preset: patch.preset ?? prev.leds.preset ?? null,
+        };
+        const optimistic: DeviceSnapshot = { ...prev, leds: nextLed };
+        set({ byId: { ...state.byId, [deviceId]: { ...state.byId[deviceId], data: optimistic } } });
+
+        try {
+            await api.post(`/devices/${deviceId}/leds/style`, patch);
+        } catch {
+            // rollback si échec
+            set({ byId: { ...state.byId, [deviceId]: { ...state.byId[deviceId], data: prev } } });
+            throw new Error('LED_STYLE_FAILED');
+        }
     },
 }));

@@ -5,6 +5,13 @@ import { useLocalSearchParams, Stack, useRouter } from 'expo-router';
 import { useDeviceState } from '../../src/store/deviceState';
 import { useDevices } from '../../src/store/devices';
 
+const SWATCHES = ['#7A5AF8', '#4DA8F0', '#00C2FF', '#FFFFFF'] as const;
+const PRESETS = ['ocean', 'sunset', 'forest'] as const;
+
+function isHex(value: string) {
+    return /^#[0-9A-Fa-f]{6}$/.test(value.trim());
+}
+
 export default function DeviceDetail() {
     const router = useRouter();
     const params = useLocalSearchParams<{ id: string }>();
@@ -17,13 +24,18 @@ export default function DeviceDetail() {
     const renameDevice = useDeviceState((s) => s.renameDevice);
     const deleteDevice = useDeviceState((s) => s.deleteDevice);
 
+    const ledsToggle = useDeviceState((s) => s.ledsToggle);
+    const ledsStyle = useDeviceState((s) => s.ledsStyle);
+
     const devices = useDevices((s) => s.items);
     const refreshDevices = useDevices((s) => s.fetchDevices);
     const deviceMeta = useMemo(() => devices.find(d => d.id === deviceId), [devices, deviceId]);
 
-    // UI local pour rename inline
     const [renaming, setRenaming] = useState(false);
     const [newName, setNewName] = useState(deviceMeta?.name ?? '');
+
+    // Local UI state pour inputs LEDs
+    const [colorText, setColorText] = useState(snapshot?.leds.color ?? '#FFFFFF');
 
     useEffect(() => {
         fetchSnapshot(deviceId);
@@ -32,6 +44,10 @@ export default function DeviceDetail() {
     useEffect(() => {
         if (deviceMeta?.name) setNewName(deviceMeta.name);
     }, [deviceMeta?.name]);
+
+    useEffect(() => {
+        if (snapshot?.leds?.color) setColorText(snapshot.leds.color);
+    }, [snapshot?.leds?.color]);
 
     async function onConfirmRename() {
         const name = newName.trim();
@@ -69,6 +85,56 @@ export default function DeviceDetail() {
     }
 
     const Title = deviceMeta?.name ?? 'Appareil';
+
+    // ─── LEDs handlers
+    async function handleToggle() {
+        try {
+            await ledsToggle(deviceId, !snapshot?.leds.on);
+        } catch {
+            Alert.alert('Erreur', "Échec de la commande on/off.");
+        }
+    }
+
+    async function handleApplyColor() {
+        const v = colorText.trim();
+        if (!isHex(v)) {
+            Alert.alert('Couleur invalide', 'Utilise un hex du type #RRGGBB.');
+            return;
+        }
+        try {
+            await ledsStyle(deviceId, { color: v, preset: null }); // preset sauté si couleur directe
+        } catch {
+            Alert.alert('Erreur', "Impossible d'appliquer la couleur.");
+        }
+    }
+
+    async function handleSwatch(c: string) {
+        setColorText(c);
+        try {
+            await ledsStyle(deviceId, { color: c, preset: null });
+        } catch {
+            Alert.alert('Erreur', "Impossible d'appliquer la couleur.");
+        }
+    }
+
+    async function changeBrightness(delta: number) {
+        if (!snapshot) return;
+        const next = Math.max(0, Math.min(100, snapshot.leds.brightness + delta));
+        try {
+            await ledsStyle(deviceId, { brightness: next });
+        } catch {
+            Alert.alert('Erreur', "Impossible de modifier la luminosité.");
+        }
+    }
+
+    async function applyPreset(p: string | null) {
+        try {
+            await ledsStyle(deviceId, { preset: p, color: p ? snapshot?.leds.color : snapshot?.leds.color });
+            // on laisse la couleur telle quelle; l'agent pourra interpréter le preset
+        } catch {
+            Alert.alert('Erreur', "Impossible d'appliquer le preset.");
+        }
+    }
 
     return (
         <View style={{ flex: 1 }}>
@@ -138,22 +204,109 @@ export default function DeviceDetail() {
                         )}
                     </View>
 
-                    {/* LEDs */}
-                    <View style={{ padding: 16, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.95)', borderWidth: 1, borderColor: 'rgba(0,0,0,0.06)' }}>
+                    {/* LEDs (contrôles réels) */}
+                    <View style={{ padding: 16, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.95)', borderWidth: 1, borderColor: 'rgba(0,0,0,0.06)', gap: 12 }}>
                         <Text style={{ fontSize: 16, fontWeight: '800' }}>LEDs</Text>
-                        {snapshot ? (
-                            <>
-                                <Text style={{ marginTop: 8 }}>État : {snapshot.leds.on ? 'allumées' : 'éteintes'}</Text>
-                                <Text>Couleur : {snapshot.leds.color}</Text>
-                                <Text>Luminosité : {snapshot.leds.brightness}%</Text>
-                                <Text>Preset : {snapshot.leds.preset ?? '—'}</Text>
-                            </>
-                        ) : (
-                            <Text style={{ marginTop: 8, color: '#666' }}>—</Text>
-                        )}
+
+                        {/* On / Off */}
+                        <Pressable
+                            onPress={handleToggle}
+                            style={{
+                                height: 42,
+                                borderRadius: 999,
+                                backgroundColor: snapshot?.leds.on ? '#16a34a' : '#9ca3af',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                            }}
+                        >
+                            <Text style={{ color: 'white', fontWeight: '700' }}>{snapshot?.leds.on ? 'Allumer → Éteindre' : 'Éteindre → Allumer'}</Text>
+                        </Pressable>
+
+                        {/* Couleur hex */}
+                        <View>
+                            <Text style={{ fontWeight: '600', marginBottom: 6 }}>Couleur (#RRGGBB)</Text>
+                            <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                                <View style={{ flex: 1, backgroundColor: 'white', borderRadius: 10, borderWidth: 1, borderColor: 'rgba(0,0,0,0.08)', paddingHorizontal: 12 }}>
+                                    <TextInput
+                                        placeholder="#00C2FF"
+                                        autoCapitalize="none"
+                                        autoCorrect={false}
+                                        value={colorText}
+                                        onChangeText={setColorText}
+                                        style={{ height: 44 }}
+                                    />
+                                </View>
+                                <Pressable
+                                    onPress={handleApplyColor}
+                                    style={{ height: 44, paddingHorizontal: 14, borderRadius: 10, backgroundColor: '#7A5AF8', alignItems: 'center', justifyContent: 'center' }}
+                                >
+                                    <Text style={{ color: 'white', fontWeight: '700' }}>Appliquer</Text>
+                                </Pressable>
+                            </View>
+
+                            {/* Swatches rapides */}
+                            <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+                                {SWATCHES.map((c) => (
+                                    <Pressable
+                                        key={c}
+                                        onPress={() => handleSwatch(c)}
+                                        style={{
+                                            width: 36, height: 36, borderRadius: 999, borderWidth: 1, borderColor: 'rgba(0,0,0,0.1)', backgroundColor: c,
+                                        }}
+                                    />
+                                ))}
+                            </View>
+                        </View>
+
+                        {/* Luminosité */}
+                        <View>
+                            <Text style={{ fontWeight: '600', marginBottom: 6 }}>Luminosité: {snapshot?.leds.brightness ?? 0}%</Text>
+                            <View style={{ flexDirection: 'row', gap: 10 }}>
+                                <Pressable
+                                    onPress={() => changeBrightness(-5)}
+                                    style={{ flex: 1, height: 40, borderRadius: 10, backgroundColor: '#eee', alignItems: 'center', justifyContent: 'center' }}
+                                >
+                                    <Text style={{ fontWeight: '700' }}>−</Text>
+                                </Pressable>
+                                <Pressable
+                                    onPress={() => changeBrightness(+5)}
+                                    style={{ flex: 1, height: 40, borderRadius: 10, backgroundColor: '#eee', alignItems: 'center', justifyContent: 'center' }}
+                                >
+                                    <Text style={{ fontWeight: '700' }}>+</Text>
+                                </Pressable>
+                            </View>
+                        </View>
+
+                        {/* Presets */}
+                        <View>
+                            <Text style={{ fontWeight: '600', marginBottom: 6 }}>Presets</Text>
+                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                                {PRESETS.map((p) => (
+                                    <Pressable
+                                        key={p}
+                                        onPress={() => applyPreset(p)}
+                                        style={{
+                                            paddingHorizontal: 12, height: 34, borderRadius: 999, backgroundColor: snapshot?.leds.preset === p ? '#7A5AF8' : '#eef1ff',
+                                            alignItems: 'center', justifyContent: 'center',
+                                        }}
+                                    >
+                                        <Text style={{ color: snapshot?.leds.preset === p ? 'white' : '#5a39cf', fontWeight: '600' }}>{p}</Text>
+                                    </Pressable>
+                                ))}
+                                <Pressable
+                                    onPress={() => applyPreset(null)}
+                                    style={{
+                                        paddingHorizontal: 12, height: 34, borderRadius: 999, backgroundColor: !snapshot?.leds.preset ? '#7A5AF8' : '#eef1ff',
+                                        alignItems: 'center', justifyContent: 'center',
+                                    }}
+                                >
+                                    <Text style={{ color: !snapshot?.leds.preset ? 'white' : '#5a39cf', fontWeight: '600' }}>none</Text>
+                                </Pressable>
+                            </View>
+                        </View>
                     </View>
 
-                    {/* Musique */}
+                    {/* Musique (lecture seule pour l’instant) */}
                     <View style={{ padding: 16, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.95)', borderWidth: 1, borderColor: 'rgba(0,0,0,0.06)' }}>
                         <Text style={{ fontSize: 16, fontWeight: '800' }}>Musique</Text>
                         {snapshot ? (
@@ -166,7 +319,7 @@ export default function DeviceDetail() {
                         )}
                     </View>
 
-                    {/* Widgets */}
+                    {/* Widgets (lecture seule pour l’instant) */}
                     <View style={{ padding: 16, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.95)', borderWidth: 1, borderColor: 'rgba(0,0,0,0.06)' }}>
                         <Text style={{ fontSize: 16, fontWeight: '800' }}>Widgets</Text>
                         {snapshot && snapshot.widgets?.length ? (

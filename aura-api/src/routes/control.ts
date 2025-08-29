@@ -3,13 +3,16 @@ import { z } from "zod";
 
 const colorHex = z.string().regex(/^#[0-9A-Fa-f]{6}$/);
 const ledStateSchema = z.object({ on: z.boolean() });
+
+// ⚠️ preset accepte maintenant null pour "none"
 const ledStyleSchema = z.object({
     color: colorHex.optional(),
     brightness: z.number().int().min(0).max(100).optional(),
-    preset: z.string().optional()
-}).refine((v) => v.color !== undefined || v.brightness !== undefined || v.preset !== undefined, {
-    message: "At least one of color, brightness, preset must be provided"
-});
+    preset: z.string().nullable().optional()
+}).refine(
+    (v) => v.color !== undefined || v.brightness !== undefined || v.preset !== undefined,
+    { message: "At least one of color, brightness, preset must be provided" }
+);
 
 const musicCmdSchema = z.object({
     action: z.enum(["play", "pause", "next", "prev"])
@@ -52,6 +55,8 @@ const control: FastifyPluginAsync = async (app) => {
             : { status: "pause" as const, volume: 50, track: null };
     };
 
+    // ───────────────── LEDs
+
     app.get("/devices/:id/leds", { onRequest: [authGuard] }, async (req: any) => {
         const deviceId = req.params.id as string;
         const userId = req.user.sub as string;
@@ -93,21 +98,25 @@ const control: FastifyPluginAsync = async (app) => {
 
         await app.prisma.$transaction(async (px) => {
             const current = await px.ledState.findUnique({ where: { deviceId } });
+
+            // Build update en ne touchant que les champs fournis
+            const update: any = {};
+            if (typeof body.color !== "undefined") update.color = body.color.toUpperCase();
+            if (typeof body.brightness !== "undefined") update.brightness = body.brightness;
+            if ("preset" in body) update.preset = body.preset; // peut être string OU null
+
             await px.ledState.upsert({
                 where: { deviceId },
-                update: {
-                    color: body.color ?? current?.color ?? "#FFFFFF",
-                    brightness: body.brightness ?? current?.brightness ?? 50,
-                    preset: body.preset !== undefined ? body.preset : current?.preset
-                },
+                update,
                 create: {
                     deviceId,
                     on: current?.on ?? false,
-                    color: body.color ?? "#FFFFFF",
-                    brightness: body.brightness ?? 50,
-                    preset: body.preset
+                    color: typeof body.color !== "undefined" ? body.color.toUpperCase() : current?.color ?? "#FFFFFF",
+                    brightness: typeof body.brightness !== "undefined" ? body.brightness : current?.brightness ?? 50,
+                    preset: "preset" in body ? body.preset : current?.preset ?? null
                 }
             });
+
             await px.audit.create({
                 data: { userId, deviceId, type: "LED_SET", payload: { style: body } }
             });
@@ -119,6 +128,8 @@ const control: FastifyPluginAsync = async (app) => {
 
         return rep.code(202).send({ accepted: true });
     });
+
+    // ───────────────── Music
 
     app.get("/devices/:id/music", { onRequest: [authGuard] }, async (req: any) => {
         const deviceId = req.params.id as string;
