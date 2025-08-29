@@ -45,6 +45,7 @@ model Device {
   audits    Audit[]
   apiKeyHash  String?
   disabled    Boolean   @default(false)
+  lastSeenAt  DateTime?
   @@index([ownerId])
 }
 

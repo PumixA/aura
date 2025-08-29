@@ -9,12 +9,12 @@ import type { WidgetItem } from '../../src/store/deviceState';
 const SWATCHES = ['#7A5AF8', '#4DA8F0', '#00C2FF', '#FFFFFF'] as const;
 const PRESETS = ['ocean', 'sunset', 'forest'] as const;
 
-// Widgets par défaut (conformes au Swagger)
+// Widgets par défaut
 const DEFAULT_WIDGETS: WidgetItem[] = [
-    { key: 'clock',   enabled: true,  orderIndex: 0, config: { format: '24h' } },
-    { key: 'weather', enabled: true,  orderIndex: 1, config: { city: 'Paris', units: 'metric' } },
-    { key: 'music',   enabled: true,  orderIndex: 2, config: {} },
-    { key: 'leds',    enabled: true,  orderIndex: 3, config: {} },
+    { key: 'clock',   enabled: true, orderIndex: 0, config: { format: '24h' } },
+    { key: 'weather', enabled: true, orderIndex: 1, config: { city: 'Paris', units: 'metric' } },
+    { key: 'music',   enabled: true, orderIndex: 2, config: {} },
+    { key: 'leds',    enabled: true, orderIndex: 3, config: {} },
 ];
 
 function isHex(value: string) {
@@ -49,10 +49,11 @@ export default function DeviceDetail() {
     const openSocket = useDeviceState((s) => s.openSocket);
     const closeSocket = useDeviceState((s) => s.closeSocket);
     const wsStatus = useDeviceState((s) => s.byId[deviceId]?.wsStatus);
+    const agentOnline = useDeviceState((s) => s.byId[deviceId]?.agentOnline);
 
     const devices = useDevices((s) => s.items);
     const refreshDevices = useDevices((s) => s.fetchDevices);
-    const deviceMeta = useMemo(() => devices.find(d => d.id === deviceId), [devices, deviceId]);
+    const deviceMeta = useMemo(() => devices.find((d) => d.id === deviceId), [devices, deviceId]);
 
     const [renaming, setRenaming] = useState(false);
     const [newName, setNewName] = useState(deviceMeta?.name ?? '');
@@ -62,12 +63,10 @@ export default function DeviceDetail() {
 
     // Widgets local draft
     const [widgetsDraft, setWidgetsDraft] = useState<WidgetItem[]>(snapshot?.widgets ?? []);
-    const weatherWidget = useMemo(() => widgetsDraft.find(w => w.key === 'weather'), [widgetsDraft]);
-    const [weatherCity, setWeatherCity] = useState(
-        (weatherWidget?.config?.city as string) || 'Paris'
-    );
+    const weatherWidget = useMemo(() => widgetsDraft.find((w) => w.key === 'weather'), [widgetsDraft]);
+    const [weatherCity, setWeatherCity] = useState((weatherWidget?.config?.city as string) || 'Paris');
 
-    // Ouvre le socket après chargement initial du snapshot, ferme au unmount
+    // Chargement initial + ouverture socket
     useEffect(() => {
         let mounted = true;
         (async () => {
@@ -91,11 +90,10 @@ export default function DeviceDetail() {
     // sync widgets draft quand le snapshot change
     useEffect(() => {
         if (snapshot?.widgets) {
-            const sorted = [...snapshot.widgets].sort((a,b)=>a.orderIndex-b.orderIndex);
+            const sorted = [...snapshot.widgets].sort((a, b) => a.orderIndex - b.orderIndex);
             setWidgetsDraft(sorted);
-            const ww = sorted.find(w => w.key === 'weather');
+            const ww = sorted.find((w) => w.key === 'weather');
             if (ww?.config?.city) setWeatherCity(String(ww.config.city));
-            // auto-fetch weather si activé
             if (ww?.enabled && (ww?.config?.city as string | undefined)) {
                 fetchWeather(String(ww.config.city), 'metric', deviceId);
             }
@@ -115,26 +113,22 @@ export default function DeviceDetail() {
     }
 
     async function onDelete() {
-        Alert.alert(
-            'Dissocier le miroir',
-            'Cette action est définitive. Continuer ?',
-            [
-                { text: 'Annuler', style: 'cancel' },
-                {
-                    text: 'Dissocier',
-                    style: 'destructive',
-                    onPress: async () => {
-                        try {
-                            await deleteDevice(deviceId);
-                            await refreshDevices();
-                            router.back();
-                        } catch {
-                            Alert.alert('Erreur', "Impossible de dissocier l'appareil.");
-                        }
+        Alert.alert('Dissocier le miroir', 'Cette action est définitive. Continuer ?', [
+            { text: 'Annuler', style: 'cancel' },
+            {
+                text: 'Dissocier',
+                style: 'destructive',
+                onPress: async () => {
+                    try {
+                        await deleteDevice(deviceId);
+                        await refreshDevices();
+                        router.back();
+                    } catch {
+                        Alert.alert('Erreur', "Impossible de dissocier l'appareil.");
                     }
-                }
-            ]
-        );
+                },
+            },
+        ]);
     }
 
     const Title = deviceMeta?.name ?? 'Appareil';
@@ -144,7 +138,7 @@ export default function DeviceDetail() {
         try {
             await ledsToggle(deviceId, !snapshot?.leds.on);
         } catch {
-            Alert.alert('Erreur', "Échec de la commande on/off.");
+            Alert.alert('Erreur', 'Échec de la commande on/off.');
         }
     }
 
@@ -155,7 +149,7 @@ export default function DeviceDetail() {
             return;
         }
         try {
-            await ledsStyle(deviceId, { color: v, preset: null }); // preset retiré si couleur directe
+            await ledsStyle(deviceId, { color: v, preset: null });
         } catch {
             Alert.alert('Erreur', "Impossible d'appliquer la couleur.");
         }
@@ -176,7 +170,7 @@ export default function DeviceDetail() {
         try {
             await ledsStyle(deviceId, { brightness: next });
         } catch {
-            Alert.alert('Erreur', "Impossible de modifier la luminosité.");
+            Alert.alert('Erreur', 'Impossible de modifier la luminosité.');
         }
     }
 
@@ -231,16 +225,15 @@ export default function DeviceDetail() {
 
     // ─── Widgets handlers
     function toggleWidget(key: WidgetItem['key']) {
-        const next = widgetsDraft.map(w => w.key === key ? { ...w, enabled: !w.enabled } : w);
+        const next = widgetsDraft.map((w) => (w.key === key ? { ...w, enabled: !w.enabled } : w));
         setWidgetsDraft(next);
     }
     function moveWidget(key: WidgetItem['key'], dir: -1 | 1) {
-        const arr = [...widgetsDraft].sort((a,b)=>a.orderIndex-b.orderIndex);
-        const idx = arr.findIndex(w => w.key === key);
+        const arr = [...widgetsDraft].sort((a, b) => a.orderIndex - b.orderIndex);
+        const idx = arr.findIndex((w) => w.key === key);
         if (idx < 0) return;
         const tgt = idx + dir;
         if (tgt < 0 || tgt >= arr.length) return;
-        // swap orderIndex
         const a = arr[idx], b = arr[tgt];
         const tmp = a.orderIndex;
         a.orderIndex = b.orderIndex;
@@ -253,14 +246,12 @@ export default function DeviceDetail() {
             return;
         }
         try {
-            // normalise ordre 0..N
             const normalized = [...widgetsDraft]
-                .sort((a,b)=>a.orderIndex-b.orderIndex)
+                .sort((a, b) => a.orderIndex - b.orderIndex)
                 .map((w, i) => ({ ...w, orderIndex: i }));
             await widgetsPut(deviceId, normalized);
             Alert.alert('OK', 'Widgets enregistrés.');
-            // si weather activé → fetch
-            const ww = normalized.find(w => w.key === 'weather');
+            const ww = normalized.find((w) => w.key === 'weather');
             if (ww?.enabled && ww?.config?.city) {
                 fetchWeather(String(ww.config.city), 'metric', deviceId);
             }
@@ -270,10 +261,9 @@ export default function DeviceDetail() {
     }
     function updateWeatherCityLocally(city: string) {
         setWeatherCity(city);
-        setWidgetsDraft(prev => prev.map(w => w.key === 'weather'
-            ? { ...w, config: { ...(w.config ?? {}), city } }
-            : w
-        ));
+        setWidgetsDraft((prev) =>
+            prev.map((w) => (w.key === 'weather' ? { ...w, config: { ...(w.config ?? {}), city } } : w))
+        );
     }
     function addDefaultWidgets() {
         setWidgetsDraft(DEFAULT_WIDGETS);
@@ -290,24 +280,24 @@ export default function DeviceDetail() {
                         paddingHorizontal: 12,
                         paddingVertical: 6,
                         backgroundColor:
-                            wsStatus === 'connected' ? '#e8f7ed'
-                                : wsStatus === 'connecting' ? '#fff6e5'
-                                    : '#fde8e8',
-                        alignItems: 'center'
+                            wsStatus === 'connected' ? '#e8f7ed' : wsStatus === 'connecting' ? '#fff6e5' : '#fde8e8',
+                        alignItems: 'center',
                     }}
                 >
                     <Text
                         style={{
-                            color:
-                                wsStatus === 'connected' ? '#166534'
-                                    : wsStatus === 'connecting' ? '#92400e'
-                                        : '#991b1b',
-                            fontWeight: '700'
+                            color: wsStatus === 'connected' ? '#166534' : wsStatus === 'connecting' ? '#92400e' : '#991b1b',
+                            fontWeight: '700',
                         }}
                     >
-                        {wsStatus === 'connected' ? 'Connecté au miroir (temps réel)'
-                            : wsStatus === 'connecting' ? 'Connexion en cours…'
+                        {wsStatus === 'connected'
+                            ? 'Connecté au miroir (temps réel)'
+                            : wsStatus === 'connecting'
+                                ? 'Connexion en cours…'
                                 : 'Hors ligne (reconnexion auto)'}
+                    </Text>
+                    <Text style={{ marginTop: 4, color: agentOnline ? '#166534' : '#991b1b', fontWeight: '700' }}>
+                        {`Agent ${agentOnline ? 'en ligne' : 'hors ligne'}`}
                     </Text>
                 </View>
             )}
@@ -322,7 +312,14 @@ export default function DeviceDetail() {
                     <Text style={{ color: '#c00' }}>{error}</Text>
                     <Pressable
                         onPress={() => fetchSnapshot(deviceId)}
-                        style={{ marginTop: 12, height: 44, borderRadius: 12, backgroundColor: '#eef1ff', alignItems: 'center', justifyContent: 'center' }}
+                        style={{
+                            marginTop: 12,
+                            height: 44,
+                            borderRadius: 12,
+                            backgroundColor: '#eef1ff',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                        }}
                     >
                         <Text style={{ color: '#5a39cf', fontWeight: '600' }}>Réessayer</Text>
                     </Pressable>
@@ -330,23 +327,45 @@ export default function DeviceDetail() {
             ) : (
                 <ScrollView contentContainerStyle={{ padding: 16, gap: 16 }}>
                     {/* Header gestion */}
-                    <View style={{ padding: 16, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.95)', borderWidth: 1, borderColor: 'rgba(0,0,0,0.06)' }}>
+                    <View
+                        style={{
+                            padding: 16,
+                            borderRadius: 16,
+                            backgroundColor: 'rgba(255,255,255,0.95)',
+                            borderWidth: 1,
+                            borderColor: 'rgba(0,0,0,0.06)',
+                        }}
+                    >
                         {!renaming ? (
                             <>
                                 <Text style={{ fontSize: 18, fontWeight: '800' }}>{deviceMeta?.name ?? 'Appareil'}</Text>
                                 <Text style={{ marginTop: 6, color: '#666' }}>
-                                    Statut : {deviceMeta?.disabled ? 'Désactivé' : 'Inconnu (agent non connecté)'}
+                                    Statut : {agentOnline ? 'Agent en ligne' : 'Agent hors ligne'}
                                 </Text>
                                 <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
                                     <Pressable
                                         onPress={() => setRenaming(true)}
-                                        style={{ height: 40, paddingHorizontal: 14, borderRadius: 10, backgroundColor: '#eef1ff', alignItems: 'center', justifyContent: 'center' }}
+                                        style={{
+                                            height: 40,
+                                            paddingHorizontal: 14,
+                                            borderRadius: 10,
+                                            backgroundColor: '#eef1ff',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                        }}
                                     >
                                         <Text style={{ color: '#5a39cf', fontWeight: '600' }}>Renommer</Text>
                                     </Pressable>
                                     <Pressable
                                         onPress={onDelete}
-                                        style={{ height: 40, paddingHorizontal: 14, borderRadius: 10, backgroundColor: '#ffe9ea', alignItems: 'center', justifyContent: 'center' }}
+                                        style={{
+                                            height: 40,
+                                            paddingHorizontal: 14,
+                                            borderRadius: 10,
+                                            backgroundColor: '#ffe9ea',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                        }}
                                     >
                                         <Text style={{ color: '#a1272c', fontWeight: '700' }}>Dissocier</Text>
                                     </Pressable>
@@ -355,19 +374,41 @@ export default function DeviceDetail() {
                         ) : (
                             <>
                                 <Text style={{ fontSize: 16, fontWeight: '700', marginBottom: 8 }}>Nouveau nom</Text>
-                                <View style={{ backgroundColor: 'white', borderRadius: 10, borderWidth: 1, borderColor: 'rgba(0,0,0,0.08)', paddingHorizontal: 12 }}>
+                                <View
+                                    style={{
+                                        backgroundColor: 'white',
+                                        borderRadius: 10,
+                                        borderWidth: 1,
+                                        borderColor: 'rgba(0,0,0,0.08)',
+                                        paddingHorizontal: 12,
+                                    }}
+                                >
                                     <TextInput value={newName} onChangeText={setNewName} style={{ height: 44 }} />
                                 </View>
                                 <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
                                     <Pressable
                                         onPress={onConfirmRename}
-                                        style={{ height: 40, paddingHorizontal: 14, borderRadius: 10, backgroundColor: '#7A5AF8', alignItems: 'center', justifyContent: 'center' }}
+                                        style={{
+                                            height: 40,
+                                            paddingHorizontal: 14,
+                                            borderRadius: 10,
+                                            backgroundColor: '#7A5AF8',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                        }}
                                     >
                                         <Text style={{ color: 'white', fontWeight: '700' }}>Enregistrer</Text>
                                     </Pressable>
                                     <Pressable
                                         onPress={() => setRenaming(false)}
-                                        style={{ height: 40, paddingHorizontal: 14, borderRadius: 10, backgroundColor: '#eee', alignItems: 'center', justifyContent: 'center' }}
+                                        style={{
+                                            height: 40,
+                                            paddingHorizontal: 14,
+                                            borderRadius: 10,
+                                            backgroundColor: '#eee',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                        }}
                                     >
                                         <Text style={{ color: '#333', fontWeight: '600' }}>Annuler</Text>
                                     </Pressable>
@@ -377,15 +418,26 @@ export default function DeviceDetail() {
                     </View>
 
                     {/* LEDs */}
-                    <View style={{ padding: 16, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.95)', borderWidth: 1, borderColor: 'rgba(0,0,0,0.06)', gap: 12 }}>
+                    <View
+                        style={{
+                            padding: 16,
+                            borderRadius: 16,
+                            backgroundColor: 'rgba(255,255,255,0.95)',
+                            borderWidth: 1,
+                            borderColor: 'rgba(0,0,0,0.06)',
+                            gap: 12,
+                        }}
+                    >
                         <Text style={{ fontSize: 16, fontWeight: '800' }}>LEDs</Text>
 
                         <Pressable
                             onPress={handleToggle}
                             style={{
-                                height: 42, borderRadius: 999,
+                                height: 42,
+                                borderRadius: 999,
                                 backgroundColor: snapshot?.leds.on ? '#16a34a' : '#9ca3af',
-                                alignItems: 'center', justifyContent: 'center',
+                                alignItems: 'center',
+                                justifyContent: 'center',
                             }}
                         >
                             <Text style={{ color: 'white', fontWeight: '700' }}>
@@ -396,7 +448,16 @@ export default function DeviceDetail() {
                         <View>
                             <Text style={{ fontWeight: '600', marginBottom: 6 }}>Couleur (#RRGGBB)</Text>
                             <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-                                <View style={{ flex: 1, backgroundColor: 'white', borderRadius: 10, borderWidth: 1, borderColor: 'rgba(0,0,0,0.08)', paddingHorizontal: 12 }}>
+                                <View
+                                    style={{
+                                        flex: 1,
+                                        backgroundColor: 'white',
+                                        borderRadius: 10,
+                                        borderWidth: 1,
+                                        borderColor: 'rgba(0,0,0,0.08)',
+                                        paddingHorizontal: 12,
+                                    }}
+                                >
                                     <TextInput
                                         placeholder="#00C2FF"
                                         autoCapitalize="none"
@@ -408,7 +469,14 @@ export default function DeviceDetail() {
                                 </View>
                                 <Pressable
                                     onPress={handleApplyColor}
-                                    style={{ height: 44, paddingHorizontal: 14, borderRadius: 10, backgroundColor: '#7A5AF8', alignItems: 'center', justifyContent: 'center' }}
+                                    style={{
+                                        height: 44,
+                                        paddingHorizontal: 14,
+                                        borderRadius: 10,
+                                        backgroundColor: '#7A5AF8',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                    }}
                                 >
                                     <Text style={{ color: 'white', fontWeight: '700' }}>Appliquer</Text>
                                 </Pressable>
@@ -420,7 +488,12 @@ export default function DeviceDetail() {
                                         key={c}
                                         onPress={() => handleSwatch(c)}
                                         style={{
-                                            width: 36, height: 36, borderRadius: 999, borderWidth: 1, borderColor: 'rgba(0,0,0,0.1)', backgroundColor: c,
+                                            width: 36,
+                                            height: 36,
+                                            borderRadius: 999,
+                                            borderWidth: 1,
+                                            borderColor: 'rgba(0,0,0,0.1)',
+                                            backgroundColor: c,
                                         }}
                                     />
                                 ))}
@@ -428,17 +501,33 @@ export default function DeviceDetail() {
                         </View>
 
                         <View>
-                            <Text style={{ fontWeight: '600', marginBottom: 6 }}>Luminosité: {snapshot?.leds.brightness ?? 0}%</Text>
+                            <Text style={{ fontWeight: '600', marginBottom: 6 }}>
+                                Luminosité: {snapshot?.leds.brightness ?? 0}%
+                            </Text>
                             <View style={{ flexDirection: 'row', gap: 10 }}>
                                 <Pressable
                                     onPress={() => changeBrightness(-5)}
-                                    style={{ flex: 1, height: 40, borderRadius: 10, backgroundColor: '#eee', alignItems: 'center', justifyContent: 'center' }}
+                                    style={{
+                                        flex: 1,
+                                        height: 40,
+                                        borderRadius: 10,
+                                        backgroundColor: '#eee',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                    }}
                                 >
                                     <Text style={{ fontWeight: '700' }}>−</Text>
                                 </Pressable>
                                 <Pressable
                                     onPress={() => changeBrightness(+5)}
-                                    style={{ flex: 1, height: 40, borderRadius: 10, backgroundColor: '#eee', alignItems: 'center', justifyContent: 'center' }}
+                                    style={{
+                                        flex: 1,
+                                        height: 40,
+                                        borderRadius: 10,
+                                        backgroundColor: '#eee',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                    }}
                                 >
                                     <Text style={{ fontWeight: '700' }}>+</Text>
                                 </Pressable>
@@ -453,42 +542,74 @@ export default function DeviceDetail() {
                                         key={p}
                                         onPress={() => applyPreset(p)}
                                         style={{
-                                            paddingHorizontal: 12, height: 34, borderRadius: 999,
+                                            paddingHorizontal: 12,
+                                            height: 34,
+                                            borderRadius: 999,
                                             backgroundColor: snapshot?.leds.preset === p ? '#7A5AF8' : '#eef1ff',
-                                            alignItems: 'center', justifyContent: 'center',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
                                         }}
                                     >
-                                        <Text style={{ color: snapshot?.leds.preset === p ? 'white' : '#5a39cf', fontWeight: '600' }}>{p}</Text>
+                                        <Text
+                                            style={{
+                                                color: snapshot?.leds.preset === p ? 'white' : '#5a39cf',
+                                                fontWeight: '600',
+                                            }}
+                                        >
+                                            {p}
+                                        </Text>
                                     </Pressable>
                                 ))}
                                 <Pressable
                                     onPress={() => applyPreset(null)}
                                     style={{
-                                        paddingHorizontal: 12, height: 34, borderRadius: 999,
+                                        paddingHorizontal: 12,
+                                        height: 34,
+                                        borderRadius: 999,
                                         backgroundColor: !snapshot?.leds.preset ? '#7A5AF8' : '#eef1ff',
-                                        alignItems: 'center', justifyContent: 'center',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
                                     }}
                                 >
-                                    <Text style={{ color: !snapshot?.leds.preset ? 'white' : '#5a39cf', fontWeight: '600' }}>none</Text>
+                                    <Text
+                                        style={{
+                                            color: !snapshot?.leds.preset ? 'white' : '#5a39cf',
+                                            fontWeight: '600',
+                                        }}
+                                    >
+                                        none
+                                    </Text>
                                 </Pressable>
                             </View>
                         </View>
                     </View>
 
                     {/* Musique */}
-                    <View style={{ padding: 16, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.95)', borderWidth: 1, borderColor: 'rgba(0,0,0,0.06)', gap: 12 }}>
+                    <View
+                        style={{
+                            padding: 16,
+                            borderRadius: 16,
+                            backgroundColor: 'rgba(255,255,255,0.95)',
+                            borderWidth: 1,
+                            borderColor: 'rgba(0,0,0,0.06)',
+                            gap: 12,
+                        }}
+                    >
                         <Text style={{ fontSize: 16, fontWeight: '800' }}>Musique</Text>
 
                         <Text style={{ color: '#666' }}>
-                            Statut : {snapshot?.music.status === 'play' ? 'lecture' : 'pause'} • Volume : {snapshot?.music.volume ?? 0}
+                            Statut : {snapshot?.music.status === 'play' ? 'lecture' : 'pause'} • Volume :{' '}
+                            {snapshot?.music.volume ?? 0}
                         </Text>
 
                         <Pressable
                             onPress={togglePlayPause}
                             style={{
-                                height: 42, borderRadius: 999,
+                                height: 42,
+                                borderRadius: 999,
                                 backgroundColor: snapshot?.music.status === 'play' ? '#16a34a' : '#7A5AF8',
-                                alignItems: 'center', justifyContent: 'center',
+                                alignItems: 'center',
+                                justifyContent: 'center',
                             }}
                         >
                             <Text style={{ color: 'white', fontWeight: '700' }}>
@@ -529,17 +650,24 @@ export default function DeviceDetail() {
                             </View>
 
                             <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
-                                {[0, 50, 100].map(v => (
+                                {[0, 50, 100].map((v) => (
                                     <Pressable
                                         key={v}
                                         onPress={() => setVolume(v)}
                                         style={{
-                                            flex: 1, height: 36, borderRadius: 999,
+                                            flex: 1,
+                                            height: 36,
+                                            borderRadius: 999,
                                             backgroundColor: (snapshot?.music.volume ?? -1) === v ? '#7A5AF8' : '#eef1ff',
-                                            alignItems: 'center', justifyContent: 'center'
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
                                         }}
                                     >
-                                        <Text style={{ color: (snapshot?.music.volume ?? -1) === v ? 'white' : '#5a39cf', fontWeight: '600' }}>{v}</Text>
+                                        <Text
+                                            style={{ color: (snapshot?.music.volume ?? -1) === v ? 'white' : '#5a39cf', fontWeight: '600' }}
+                                        >
+                                            {v}
+                                        </Text>
                                     </Pressable>
                                 ))}
                             </View>
@@ -547,24 +675,37 @@ export default function DeviceDetail() {
                     </View>
 
                     {/* Widgets & Météo */}
-                    <View style={{ padding: 16, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.95)', borderWidth: 1, borderColor: 'rgba(0,0,0,0.06)', gap: 12 }}>
+                    <View
+                        style={{
+                            padding: 16,
+                            borderRadius: 16,
+                            backgroundColor: 'rgba(255,255,255,0.95)',
+                            borderWidth: 1,
+                            borderColor: 'rgba(0,0,0,0.06)',
+                            gap: 12,
+                        }}
+                    >
                         <Text style={{ fontSize: 16, fontWeight: '800' }}>Widgets</Text>
 
                         {!widgetsDraft.length ? (
                             <View>
-                                <Text style={{ color: '#666', marginBottom: 10 }}>
-                                    Aucun widget configuré pour ce miroir.
-                                </Text>
+                                <Text style={{ color: '#666', marginBottom: 10 }}>Aucun widget configuré pour ce miroir.</Text>
                                 <Pressable
                                     onPress={addDefaultWidgets}
-                                    style={{ height: 44, borderRadius: 12, backgroundColor: '#7A5AF8', alignItems: 'center', justifyContent: 'center' }}
+                                    style={{
+                                        height: 44,
+                                        borderRadius: 12,
+                                        backgroundColor: '#7A5AF8',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                    }}
                                 >
                                     <Text style={{ color: 'white', fontWeight: '700' }}>Ajouter les widgets par défaut</Text>
                                 </Pressable>
                             </View>
                         ) : (
                             <>
-                                {widgetsDraft.map(w => (
+                                {widgetsDraft.map((w) => (
                                     <View key={w.key} style={{ paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: 'rgba(0,0,0,0.05)' }}>
                                         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                                             <Text style={{ fontWeight: '700' }}>{w.key}</Text>
@@ -575,7 +716,14 @@ export default function DeviceDetail() {
                                         <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
                                             <Pressable
                                                 onPress={() => toggleWidget(w.key as any)}
-                                                style={{ flex: 1, height: 36, borderRadius: 999, backgroundColor: w.enabled ? '#16a34a' : '#9ca3af', alignItems: 'center', justifyContent: 'center' }}
+                                                style={{
+                                                    flex: 1,
+                                                    height: 36,
+                                                    borderRadius: 999,
+                                                    backgroundColor: w.enabled ? '#16a34a' : '#9ca3af',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center',
+                                                }}
                                             >
                                                 <Text style={{ color: 'white', fontWeight: '700' }}>{w.enabled ? 'Activé' : 'Désactivé'}</Text>
                                             </Pressable>
@@ -598,17 +746,28 @@ export default function DeviceDetail() {
                                             <View style={{ marginTop: 8 }}>
                                                 <Text style={{ fontWeight: '600', marginBottom: 6 }}>Ville (météo)</Text>
                                                 <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-                                                    <View style={{ flex: 1, backgroundColor: 'white', borderRadius: 10, borderWidth: 1, borderColor: 'rgba(0,0,0,0.08)', paddingHorizontal: 12 }}>
-                                                        <TextInput
-                                                            value={weatherCity}
-                                                            onChangeText={updateWeatherCityLocally}
-                                                            placeholder="Paris"
-                                                            style={{ height: 44 }}
-                                                        />
+                                                    <View
+                                                        style={{
+                                                            flex: 1,
+                                                            backgroundColor: 'white',
+                                                            borderRadius: 10,
+                                                            borderWidth: 1,
+                                                            borderColor: 'rgba(0,0,0,0.08)',
+                                                            paddingHorizontal: 12,
+                                                        }}
+                                                    >
+                                                        <TextInput value={weatherCity} onChangeText={updateWeatherCityLocally} placeholder="Paris" style={{ height: 44 }} />
                                                     </View>
                                                     <Pressable
                                                         onPress={() => fetchWeather(weatherCity, 'metric', deviceId)}
-                                                        style={{ height: 44, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#eef1ff', alignItems: 'center', justifyContent: 'center' }}
+                                                        style={{
+                                                            height: 44,
+                                                            paddingHorizontal: 12,
+                                                            borderRadius: 10,
+                                                            backgroundColor: '#eef1ff',
+                                                            alignItems: 'center',
+                                                            justifyContent: 'center',
+                                                        }}
                                                     >
                                                         <Text style={{ color: '#5a39cf', fontWeight: '700' }}>Tester</Text>
                                                     </Pressable>
@@ -620,7 +779,14 @@ export default function DeviceDetail() {
 
                                 <Pressable
                                     onPress={saveWidgets}
-                                    style={{ marginTop: 12, height: 44, borderRadius: 12, backgroundColor: '#7A5AF8', alignItems: 'center', justifyContent: 'center' }}
+                                    style={{
+                                        marginTop: 12,
+                                        height: 44,
+                                        borderRadius: 12,
+                                        backgroundColor: '#7A5AF8',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                    }}
                                 >
                                     <Text style={{ color: 'white', fontWeight: '700' }}>Enregistrer les widgets</Text>
                                 </Pressable>
@@ -628,8 +794,17 @@ export default function DeviceDetail() {
                         )}
 
                         {/* Bloc météo (si activé) */}
-                        {widgetsDraft.find(w => w.key === 'weather' && w.enabled) && (
-                            <View style={{ marginTop: 16, padding: 14, borderRadius: 16, backgroundColor: 'rgba(125, 95, 245, 0.08)', borderWidth: 1, borderColor: 'rgba(0,0,0,0.06)' }}>
+                        {widgetsDraft.find((w) => w.key === 'weather' && w.enabled) && (
+                            <View
+                                style={{
+                                    marginTop: 16,
+                                    padding: 14,
+                                    borderRadius: 16,
+                                    backgroundColor: 'rgba(125, 95, 245, 0.08)',
+                                    borderWidth: 1,
+                                    borderColor: 'rgba(0,0,0,0.06)',
+                                }}
+                            >
                                 <Text style={{ fontWeight: '800' }}>Météo — {weatherCity}</Text>
                                 {weatherLoading ? (
                                     <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', marginTop: 6 }}>

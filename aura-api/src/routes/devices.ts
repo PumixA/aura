@@ -1,5 +1,10 @@
+// src/routes/devices.ts
 import { FastifyPluginAsync } from 'fastify'
 import { z } from 'zod'
+import bcrypt from 'bcryptjs'
+
+// TTL de présence : cohérent avec heartbeat (~20s)
+const PRESENCE_TTL_MS = 35_000
 
 const pairSchema = z.object({
     deviceId: z.string().uuid(),
@@ -21,6 +26,54 @@ const devicesRoutes: FastifyPluginAsync = async (app) => {
         if (d.disabled) throw app.httpErrors.conflict('Device disabled')
     }
 
+    // ---------- helpers realtime / widgets ----------
+    const getWidgetsList = async (appAny: any, deviceId: string) => {
+        return appAny.prisma.deviceWidget.findMany({
+            where: { deviceId },
+            select: { key: true, enabled: true, orderIndex: true, config: true },
+            orderBy: { orderIndex: 'asc' }
+        })
+    }
+
+    const emitWs = (appAny: any, deviceId: string, event: string, payload: any) => {
+        const io = (appAny as any).__io as import("socket.io").Server | undefined
+        io?.of("/agent").to(deviceId).emit(event, { deviceId, ...payload })
+    }
+
+    const touchDevicePresence = async (appAny: any, deviceId: string) => {
+        const now = new Date()
+        await appAny.prisma.device.update({
+            where: { id: deviceId },
+            data: { lastSeenAt: now },
+            select: { id: true }
+        })
+        emitWs(appAny, deviceId, 'presence', { online: true, lastSeenAt: now.toISOString() })
+    }
+
+    // Auth ApiKey pour AGENT (Authorization: ApiKey <clé> + x-device-id)
+    const verifyAgentApiKey = async (appAny: any, req: any, deviceIdFromPath?: string) => {
+        const auth = req.headers['authorization']
+        const didHeader = req.headers['x-device-id'] as string | undefined
+        if (!auth || typeof auth !== 'string' || !auth.startsWith('ApiKey ') || !didHeader) {
+            throw app.httpErrors.unauthorized('Missing ApiKey or x-device-id')
+        }
+        const plain = auth.slice(7).trim()
+        const deviceId = deviceIdFromPath ?? didHeader
+        if (deviceId !== didHeader) throw app.httpErrors.unauthorized('x-device-id mismatch')
+
+        const dev = await appAny.prisma.device.findUnique({
+            where: { id: deviceId },
+            select: { apiKeyHash: true, disabled: true }
+        })
+        if (!dev || dev.disabled || !dev.apiKeyHash) {
+            throw app.httpErrors.unauthorized('Device invalid/disabled')
+        }
+        const ok = await bcrypt.compare(plain, dev.apiKeyHash)
+        if (!ok) throw app.httpErrors.unauthorized('Invalid ApiKey')
+        return deviceId
+    }
+
+    // ---------- GET /devices : ajoute online/lastSeenAt ----------
     app.get('/devices', { preHandler: app.authenticate }, async (req: any) => {
         const userId = req.user.sub as string
 
@@ -30,21 +83,45 @@ const devicesRoutes: FastifyPluginAsync = async (app) => {
                 id: true,
                 name: true,
                 createdAt: true,
-                disabled: true
+                disabled: true,
+                lastSeenAt: true
             },
             orderBy: { createdAt: 'asc' }
         })
 
-        return devices.map(d => ({
-            id: d.id,
-            name: d.name,
-            createdAt: d.createdAt,
-            disabled: d.disabled,
-            online: null as boolean | null,
-            lastSeenAt: null as Date | null
-        }))
+        const now = Date.now()
+        return devices.map(d => {
+            const last = d.lastSeenAt ? d.lastSeenAt.getTime() : 0
+            const online = !!last && (now - last) <= PRESENCE_TTL_MS && !d.disabled
+            return {
+                id: d.id,
+                name: d.name,
+                createdAt: d.createdAt,
+                disabled: d.disabled,
+                online,
+                lastSeenAt: d.lastSeenAt ?? null
+            }
+        })
     })
 
+    // ---------- GET /devices/:deviceId/online : fallback par lastSeenAt ----------
+    app.get('/devices/:deviceId/online', { preHandler: app.authenticate }, async (req: any) => {
+        const { deviceId } = req.params as { deviceId: string }
+        const userId = req.user.sub as string
+        await ensureOwnDevice(userId, deviceId)
+
+        const d = await app.prisma.device.findUnique({
+            where: { id: deviceId },
+            select: { lastSeenAt: true, disabled: true }
+        })
+        if (!d) throw app.httpErrors.notFound()
+
+        const last = d.lastSeenAt ? d.lastSeenAt.getTime() : 0
+        const online = !!last && (Date.now() - last) <= PRESENCE_TTL_MS && !d.disabled
+        return { online, lastSeenAt: d.lastSeenAt ?? null }
+    })
+
+    // ---------- Pairing ----------
     app.post('/devices/pair', { preHandler: app.authenticate }, async (req: any, reply) => {
         const { deviceId, pairingToken } = pairSchema.parse(req.body)
         const userId = req.user.sub as string
@@ -87,6 +164,7 @@ const devicesRoutes: FastifyPluginAsync = async (app) => {
         return reply.send({ device: { id: updated.id, name: updated.name } })
     })
 
+    // ---------- Rename ----------
     app.put('/devices/:deviceId', { preHandler: app.authenticate }, async (req: any) => {
         const { deviceId } = req.params as { deviceId: string }
         const { name } = renameSchema.parse(req.body)
@@ -102,6 +180,7 @@ const devicesRoutes: FastifyPluginAsync = async (app) => {
         return { device }
     })
 
+    // ---------- Delete ----------
     app.delete('/devices/:deviceId', { preHandler: app.authenticate }, async (req: any, reply) => {
         const { deviceId } = req.params as { deviceId: string }
         const userId = req.user.sub as string
@@ -123,6 +202,7 @@ const devicesRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(204).send()
     })
 
+    // ---------- Snapshot ----------
     app.get('/devices/:deviceId/state', { preHandler: app.authenticate }, async (req: any) => {
         const { deviceId } = req.params as { deviceId: string }
         const userId = req.user.sub as string
@@ -150,6 +230,7 @@ const devicesRoutes: FastifyPluginAsync = async (app) => {
         }
     })
 
+    // ---------- Widgets ----------
     const AllowedWidgetKeys = ["clock","weather","music","leds"] as const
     const widgetItemSchema = z.object({
         key: z.enum(AllowedWidgetKeys),
@@ -160,19 +241,6 @@ const devicesRoutes: FastifyPluginAsync = async (app) => {
     const putWidgetsSchema = z.object({
         items: z.array(widgetItemSchema).min(1)
     })
-
-    const getWidgetsList = async (app: any, deviceId: string) => {
-        return app.prisma.deviceWidget.findMany({
-            where: { deviceId },
-            select: { key: true, enabled: true, orderIndex: true, config: true },
-            orderBy: { orderIndex: 'asc' }
-        })
-    }
-
-    const emitWs = (app: any, deviceId: string, event: string, payload: any) => {
-        const io = (app as any).__io as import("socket.io").Server | undefined
-        io?.of("/agent").to(deviceId).emit(event, { deviceId, ...payload })
-    }
 
     app.get('/devices/:deviceId/widgets', { preHandler: app.authenticate }, async (req: any) => {
         const { deviceId } = req.params as { deviceId: string }
@@ -220,7 +288,6 @@ const devicesRoutes: FastifyPluginAsync = async (app) => {
 
         return { items: widgets }
     })
-
 }
 
 export default devicesRoutes

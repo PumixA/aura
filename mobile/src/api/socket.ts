@@ -2,29 +2,58 @@
 import { io, Socket } from 'socket.io-client';
 import { API_BASE } from '../lib/env';
 
-export type DeviceSocket = Socket<{
-    // events we EMIT
-    'ui:join': (payload: { deviceId: string }) => void;
-}, {
-    // events we RECEIVE
+/** Retire /api/vX de API_BASE pour le WebSocket (Socket.IO est monté à la racine). */
+function computeWsOrigin(apiBase: string): string {
+    try {
+        let base = apiBase.replace(/\/+$/, '');
+        base = base.replace(/\/api\/v\d+$/i, '');
+        return base || apiBase;
+    } catch {
+        return apiBase;
+    }
+}
+
+const ORIGIN = computeWsOrigin(API_BASE);
+const NAMESPACE = '/agent';
+const SOCKET_PATH = '/socket.io';
+
+type ServerToClientEvents = {
     'state:update': (payload: any) => void;
-    'ack': (payload: { deviceId: string; type: string; data?: any }) => void;
-    'nack': (payload: { deviceId: string; type: string; error?: string }) => void;
-}>;
+    'agent:ack': (payload: { deviceId: string; type?: string; status?: string; data?: any }) => void;
+    'agent:nack': (payload: { deviceId: string; reason?: string; type?: string; error?: string }) => void;
+    'agent:heartbeat': (payload: { deviceId: string; status?: 'ok' | 'degraded'; metrics?: any }) => void;
+    'presence': (payload: { deviceId: string; online: boolean }) => void;
+};
+
+type ClientToServerEvents = {
+    'ui:join': (payload: { deviceId: string }) => void;
+};
+
+export type DeviceSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
 /**
- * Crée un socket sur le namespace "/agent" avec auth JWT.
- * Le serveur attend handshake.auth.token = "Bearer <JWT>".
+ * Socket.IO namespace "/agent" avec auth JWT dans handshake.auth.token = "Bearer <JWT>"
  */
 export function createDeviceSocket(accessToken: string): DeviceSocket {
-    const socket = io(`${API_BASE}/agent`, {
-        path: '/socket.io',
-        transports: ['websocket'], // plus fiable en RN
-        forceNew: true,            // éviter le partage de connexion par défaut
-        auth: {
-            token: `Bearer ${accessToken}`,
-        },
+    const socket = io(`${ORIGIN}${NAMESPACE}`, {
+        path: SOCKET_PATH,
+        transports: ['websocket'],
+        forceNew: true,
+        timeout: 10_000,
+        reconnection: true,
+        reconnectionAttempts: 0,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
+        auth: { token: `Bearer ${accessToken}` },
     }) as DeviceSocket;
+
+    // (facultatif) Logs debug
+    // @ts-ignore
+    if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        socket.on('connect', () => console.log('[socket] connected', `${ORIGIN}${NAMESPACE}`));
+        socket.on('connect_error', (e) => console.warn('[socket] connect_error', e?.message || e));
+        socket.on('disconnect', (r) => console.log('[socket] disconnected', r));
+    }
 
     return socket;
 }

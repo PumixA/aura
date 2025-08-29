@@ -27,11 +27,9 @@ export const useDevices = create<DevicesState>((set) => ({
         set({ loading: true, error: null });
         try {
             const { data } = await api.get<DeviceListItem[]>('/devices');
-            set({ items: data });
-        } catch (e: any) {
-            set({ error: 'Impossible de charger les appareils.' });
-        } finally {
-            set({ loading: false });
+            set({ items: data, loading: false });
+        } catch {
+            set({ error: 'Impossible de charger les appareils.', loading: false });
         }
     },
 }));
