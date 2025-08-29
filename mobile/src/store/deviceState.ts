@@ -32,6 +32,17 @@ type PerDevice = {
     data?: DeviceSnapshot;
     loading: boolean;
     error?: string | null;
+    weather?: {
+        city: string;
+        units: 'metric' | 'imperial';
+        temp: number;
+        desc: string;
+        icon: string;
+        updatedAt: string;
+        ttlSec: number;
+    } | null;
+    weatherLoading?: boolean;
+    weatherError?: string | null;
 };
 
 interface DeviceStateStore {
@@ -47,6 +58,12 @@ interface DeviceStateStore {
     // Music
     musicCmd: (deviceId: string, action: 'play' | 'pause' | 'next' | 'prev') => Promise<void>;
     musicSetVolume: (deviceId: string, value: number) => Promise<void>;
+
+    // Widgets
+    widgetsPut: (deviceId: string, items: WidgetItem[]) => Promise<WidgetItem[]>;
+
+    // Weather
+    fetchWeather: (city: string, units?: 'metric' | 'imperial', deviceIdForCache?: string) => Promise<void>;
 }
 
 export const useDeviceState = create<DeviceStateStore>((set, get) => ({
@@ -57,7 +74,7 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
         set({ byId: { ...get().byId, [deviceId]: { ...cur, loading: true, error: null } } });
         try {
             const { data } = await api.get<DeviceSnapshot>(`/devices/${deviceId}/state`);
-            set({ byId: { ...get().byId, [deviceId]: { data, loading: false, error: null } } });
+            set({ byId: { ...get().byId, [deviceId]: { ...get().byId[deviceId], data, loading: false, error: null } } });
         } catch (e: any) {
             set({ byId: { ...get().byId, [deviceId]: { ...cur, loading: false, error: 'Impossible de charger le snapshot.' } } });
         }
@@ -78,20 +95,18 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
         const prev = state.byId[deviceId]?.data;
         if (!prev) return;
 
-        // optimistic
         const optimistic: DeviceSnapshot = { ...prev, leds: { ...prev.leds, on } };
         set({ byId: { ...state.byId, [deviceId]: { ...state.byId[deviceId], data: optimistic } } });
 
         try {
             await api.post(`/devices/${deviceId}/leds/state`, { on });
         } catch {
-            // rollback
             set({ byId: { ...state.byId, [deviceId]: { ...state.byId[deviceId], data: prev } } });
             throw new Error('LED_TOGGLE_FAILED');
         }
     },
 
-    // ─── LEDs: style (color/brightness/preset) (optimiste + rollback)
+    // ─── LEDs: style (optimiste + rollback)
     ledsStyle: async (deviceId, patch) => {
         const state = get();
         const prev = state.byId[deviceId]?.data;
@@ -109,13 +124,12 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
         try {
             await api.post(`/devices/${deviceId}/leds/style`, patch);
         } catch {
-            // rollback si échec
             set({ byId: { ...state.byId, [deviceId]: { ...state.byId[deviceId], data: prev } } });
             throw new Error('LED_STYLE_FAILED');
         }
     },
 
-    // ─── Music: commandes (play/pause/next/prev) optimiste + rollback pour play/pause
+    // ─── Music: commandes
     musicCmd: async (deviceId, action) => {
         const state = get();
         const prev = state.byId[deviceId]?.data;
@@ -126,19 +140,17 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
             optimistic = { ...prev, music: { ...prev.music, status: action } };
             set({ byId: { ...state.byId, [deviceId]: { ...state.byId[deviceId], data: optimistic } } });
         }
-
         try {
             await api.post(`/devices/${deviceId}/music/cmd`, { action });
         } catch {
             if (optimistic) {
-                // rollback si play/pause a échoué
                 set({ byId: { ...state.byId, [deviceId]: { ...state.byId[deviceId], data: prev } } });
             }
             throw new Error('MUSIC_CMD_FAILED');
         }
     },
 
-    // ─── Music: volume (optimiste + rollback)
+    // ─── Music: volume
     musicSetVolume: async (deviceId, value) => {
         const state = get();
         const prev = state.byId[deviceId]?.data;
@@ -151,9 +163,41 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
         try {
             await api.post(`/devices/${deviceId}/music/volume`, { value: v });
         } catch {
-            // rollback
             set({ byId: { ...state.byId, [deviceId]: { ...state.byId[deviceId], data: prev } } });
             throw new Error('MUSIC_VOLUME_FAILED');
+        }
+    },
+
+    // ─── Widgets: PUT items complets (optimiste + rollback simple)
+    widgetsPut: async (deviceId, items) => {
+        const state = get();
+        const prev = state.byId[deviceId]?.data;
+        if (!prev) throw new Error('NO_SNAPSHOT');
+
+        const optimistic: DeviceSnapshot = { ...prev, widgets: items.slice().sort((a,b)=>a.orderIndex-b.orderIndex) };
+        set({ byId: { ...state.byId, [deviceId]: { ...state.byId[deviceId], data: optimistic } } });
+
+        try {
+            const { data } = await api.put<{ items: WidgetItem[] }>(`/devices/${deviceId}/widgets`, { items });
+            const normalized = data.items.slice().sort((a,b)=>a.orderIndex-b.orderIndex);
+            set({ byId: { ...state.byId, [deviceId]: { ...state.byId[deviceId], data: { ...prev, widgets: normalized } } } });
+            return normalized;
+        } catch {
+            set({ byId: { ...state.byId, [deviceId]: { ...state.byId[deviceId], data: prev } } });
+            throw new Error('WIDGETS_PUT_FAILED');
+        }
+    },
+
+    // ─── Weather: GET /weather?city=...
+    fetchWeather: async (city, units = 'metric', deviceIdForCache) => {
+        const key = deviceIdForCache ?? '__global__';
+        const cur = get().byId[key] ?? { loading: false };
+        set({ byId: { ...get().byId, [key]: { ...cur, weatherLoading: true, weatherError: null } } });
+        try {
+            const { data } = await api.get(`/weather`, { params: { city, units } });
+            set({ byId: { ...get().byId, [key]: { ...get().byId[key], weather: data, weatherLoading: false } } });
+        } catch (e) {
+            set({ byId: { ...get().byId, [key]: { ...get().byId[key], weatherLoading: false, weatherError: 'Météo indisponible.' } } });
         }
     },
 }));
