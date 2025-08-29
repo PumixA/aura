@@ -43,6 +43,10 @@ interface DeviceStateStore {
     // LEDs
     ledsToggle: (deviceId: string, on: boolean) => Promise<void>;
     ledsStyle: (deviceId: string, patch: Partial<Pick<LedState, 'color' | 'brightness' | 'preset'>>) => Promise<void>;
+
+    // Music
+    musicCmd: (deviceId: string, action: 'play' | 'pause' | 'next' | 'prev') => Promise<void>;
+    musicSetVolume: (deviceId: string, value: number) => Promise<void>;
 }
 
 export const useDeviceState = create<DeviceStateStore>((set, get) => ({
@@ -80,7 +84,6 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
 
         try {
             await api.post(`/devices/${deviceId}/leds/state`, { on });
-            // ok, rien à faire (on garde optimiste)
         } catch {
             // rollback
             set({ byId: { ...state.byId, [deviceId]: { ...state.byId[deviceId], data: prev } } });
@@ -98,7 +101,7 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
             ...prev.leds,
             color: patch.color ?? prev.leds.color,
             brightness: patch.brightness ?? prev.leds.brightness,
-            preset: patch.preset ?? prev.leds.preset ?? null,
+            preset: (patch.preset !== undefined ? patch.preset : prev.leds.preset) ?? null,
         };
         const optimistic: DeviceSnapshot = { ...prev, leds: nextLed };
         set({ byId: { ...state.byId, [deviceId]: { ...state.byId[deviceId], data: optimistic } } });
@@ -109,6 +112,48 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
             // rollback si échec
             set({ byId: { ...state.byId, [deviceId]: { ...state.byId[deviceId], data: prev } } });
             throw new Error('LED_STYLE_FAILED');
+        }
+    },
+
+    // ─── Music: commandes (play/pause/next/prev) optimiste + rollback pour play/pause
+    musicCmd: async (deviceId, action) => {
+        const state = get();
+        const prev = state.byId[deviceId]?.data;
+        if (!prev) return;
+
+        let optimistic: DeviceSnapshot | undefined;
+        if (action === 'play' || action === 'pause') {
+            optimistic = { ...prev, music: { ...prev.music, status: action } };
+            set({ byId: { ...state.byId, [deviceId]: { ...state.byId[deviceId], data: optimistic } } });
+        }
+
+        try {
+            await api.post(`/devices/${deviceId}/music/cmd`, { action });
+        } catch {
+            if (optimistic) {
+                // rollback si play/pause a échoué
+                set({ byId: { ...state.byId, [deviceId]: { ...state.byId[deviceId], data: prev } } });
+            }
+            throw new Error('MUSIC_CMD_FAILED');
+        }
+    },
+
+    // ─── Music: volume (optimiste + rollback)
+    musicSetVolume: async (deviceId, value) => {
+        const state = get();
+        const prev = state.byId[deviceId]?.data;
+        if (!prev) return;
+
+        const v = Math.max(0, Math.min(100, Math.round(value)));
+        const optimistic: DeviceSnapshot = { ...prev, music: { ...prev.music, volume: v } };
+        set({ byId: { ...state.byId, [deviceId]: { ...state.byId[deviceId], data: optimistic } } });
+
+        try {
+            await api.post(`/devices/${deviceId}/music/volume`, { value: v });
+        } catch {
+            // rollback
+            set({ byId: { ...state.byId, [deviceId]: { ...state.byId[deviceId], data: prev } } });
+            throw new Error('MUSIC_VOLUME_FAILED');
         }
     },
 }));
