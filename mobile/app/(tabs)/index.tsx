@@ -68,7 +68,8 @@ export default function Home() {
                 keyExtractor={(d) => d.id}
                 refreshControl={<RefreshControl refreshing={loading} onRefresh={fetchDevices} />}
                 renderItem={({ item }) => (
-                    <View
+                    <Pressable
+                        onPress={() => router.push(`/device/${item.id}`)}
                         style={{
                             padding: 16,
                             borderRadius: 16,
@@ -83,7 +84,7 @@ export default function Home() {
                             {/* online/lastSeenAt null pour l’instant (pas d’agent) */}
                             Hors ligne
                         </Text>
-                    </View>
+                    </Pressable>
                 )}
             />
         </View>
