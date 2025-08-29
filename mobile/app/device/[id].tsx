@@ -27,6 +27,9 @@ export default function DeviceDetail() {
     const ledsToggle = useDeviceState((s) => s.ledsToggle);
     const ledsStyle = useDeviceState((s) => s.ledsStyle);
 
+    const musicCmd = useDeviceState((s) => s.musicCmd);
+    const musicSetVolume = useDeviceState((s) => s.musicSetVolume);
+
     const devices = useDevices((s) => s.items);
     const refreshDevices = useDevices((s) => s.fetchDevices);
     const deviceMeta = useMemo(() => devices.find(d => d.id === deviceId), [devices, deviceId]);
@@ -102,7 +105,7 @@ export default function DeviceDetail() {
             return;
         }
         try {
-            await ledsStyle(deviceId, { color: v, preset: null }); // preset sauté si couleur directe
+            await ledsStyle(deviceId, { color: v, preset: null }); // preset retiré si couleur directe
         } catch {
             Alert.alert('Erreur', "Impossible d'appliquer la couleur.");
         }
@@ -129,10 +132,50 @@ export default function DeviceDetail() {
 
     async function applyPreset(p: string | null) {
         try {
-            await ledsStyle(deviceId, { preset: p, color: p ? snapshot?.leds.color : snapshot?.leds.color });
-            // on laisse la couleur telle quelle; l'agent pourra interpréter le preset
+            await ledsStyle(deviceId, { preset: p });
         } catch {
             Alert.alert('Erreur', "Impossible d'appliquer le preset.");
+        }
+    }
+
+    // ─── Music handlers
+    async function togglePlayPause() {
+        if (!snapshot) return;
+        const next = snapshot.music.status === 'play' ? 'pause' : 'play';
+        try {
+            await musicCmd(deviceId, next);
+        } catch {
+            Alert.alert('Erreur', 'Commande play/pause échouée.');
+        }
+    }
+    async function nextTrack() {
+        try {
+            await musicCmd(deviceId, 'next');
+        } catch {
+            Alert.alert('Erreur', 'Commande next échouée.');
+        }
+    }
+    async function prevTrack() {
+        try {
+            await musicCmd(deviceId, 'prev');
+        } catch {
+            Alert.alert('Erreur', 'Commande prev échouée.');
+        }
+    }
+    async function changeVolume(delta: number) {
+        if (!snapshot) return;
+        const next = Math.max(0, Math.min(100, snapshot.music.volume + delta));
+        try {
+            await musicSetVolume(deviceId, next);
+        } catch {
+            Alert.alert('Erreur', 'Changement de volume échoué.');
+        }
+    }
+    async function setVolume(v: number) {
+        try {
+            await musicSetVolume(deviceId, v);
+        } catch {
+            Alert.alert('Erreur', 'Changement de volume échoué.');
         }
     }
 
@@ -219,7 +262,9 @@ export default function DeviceDetail() {
                                 justifyContent: 'center',
                             }}
                         >
-                            <Text style={{ color: 'white', fontWeight: '700' }}>{snapshot?.leds.on ? 'Allumer → Éteindre' : 'Éteindre → Allumer'}</Text>
+                            <Text style={{ color: 'white', fontWeight: '700' }}>
+                                {snapshot?.leds.on ? 'Éteindre' : 'Allumer'}
+                            </Text>
                         </Pressable>
 
                         {/* Couleur hex */}
@@ -306,20 +351,87 @@ export default function DeviceDetail() {
                         </View>
                     </View>
 
-                    {/* Musique (lecture seule pour l’instant) */}
-                    <View style={{ padding: 16, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.95)', borderWidth: 1, borderColor: 'rgba(0,0,0,0.06)' }}>
+                    {/* Musique (contrôles réels) */}
+                    <View style={{ padding: 16, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.95)', borderWidth: 1, borderColor: 'rgba(0,0,0,0.06)', gap: 12 }}>
                         <Text style={{ fontSize: 16, fontWeight: '800' }}>Musique</Text>
-                        {snapshot ? (
-                            <>
-                                <Text style={{ marginTop: 8 }}>Statut : {snapshot.music.status === 'play' ? 'lecture' : 'pause'}</Text>
-                                <Text>Volume : {snapshot.music.volume}</Text>
-                            </>
-                        ) : (
-                            <Text style={{ marginTop: 8, color: '#666' }}>—</Text>
-                        )}
+
+                        <Text style={{ color: '#666' }}>
+                            Statut : {snapshot?.music.status === 'play' ? 'lecture' : 'pause'} • Volume : {snapshot?.music.volume ?? 0}
+                        </Text>
+
+                        {/* Play / Pause */}
+                        <Pressable
+                            onPress={togglePlayPause}
+                            style={{
+                                height: 42,
+                                borderRadius: 999,
+                                backgroundColor: snapshot?.music.status === 'play' ? '#16a34a' : '#7A5AF8',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                            }}
+                        >
+                            <Text style={{ color: 'white', fontWeight: '700' }}>
+                                {snapshot?.music.status === 'play' ? 'Pause' : 'Lecture'}
+                            </Text>
+                        </Pressable>
+
+                        {/* Prev / Next */}
+                        <View style={{ flexDirection: 'row', gap: 10 }}>
+                            <Pressable
+                                onPress={prevTrack}
+                                style={{ flex: 1, height: 40, borderRadius: 10, backgroundColor: '#eee', alignItems: 'center', justifyContent: 'center' }}
+                            >
+                                <Text style={{ fontWeight: '700' }}>{'⟨⟨'} Prev</Text>
+                            </Pressable>
+                            <Pressable
+                                onPress={nextTrack}
+                                style={{ flex: 1, height: 40, borderRadius: 10, backgroundColor: '#eee', alignItems: 'center', justifyContent: 'center' }}
+                            >
+                                <Text style={{ fontWeight: '700' }}>Next {'⟩⟩'}</Text>
+                            </Pressable>
+                        </View>
+
+                        {/* Volume */}
+                        <View>
+                            <Text style={{ fontWeight: '600', marginBottom: 6 }}>Volume</Text>
+                            <View style={{ flexDirection: 'row', gap: 10 }}>
+                                <Pressable
+                                    onPress={() => changeVolume(-5)}
+                                    style={{ flex: 1, height: 40, borderRadius: 10, backgroundColor: '#eee', alignItems: 'center', justifyContent: 'center' }}
+                                >
+                                    <Text style={{ fontWeight: '700' }}>−</Text>
+                                </Pressable>
+                                <Pressable
+                                    onPress={() => changeVolume(+5)}
+                                    style={{ flex: 1, height: 40, borderRadius: 10, backgroundColor: '#eee', alignItems: 'center', justifyContent: 'center' }}
+                                >
+                                    <Text style={{ fontWeight: '700' }}>+</Text>
+                                </Pressable>
+                            </View>
+
+                            {/* Shortcuts 0 / 50 / 100 */}
+                            <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+                                {[0, 50, 100].map(v => (
+                                    <Pressable
+                                        key={v}
+                                        onPress={() => setVolume(v)}
+                                        style={{
+                                            flex: 1,
+                                            height: 36,
+                                            borderRadius: 999,
+                                            backgroundColor: (snapshot?.music.volume ?? -1) === v ? '#7A5AF8' : '#eef1ff',
+                                            alignItems: 'center',
+                                            justifyContent: 'center'
+                                        }}
+                                    >
+                                        <Text style={{ color: (snapshot?.music.volume ?? -1) === v ? 'white' : '#5a39cf', fontWeight: '600' }}>{v}</Text>
+                                    </Pressable>
+                                ))}
+                            </View>
+                        </View>
                     </View>
 
-                    {/* Widgets (lecture seule pour l’instant) */}
+                    {/* Widgets (lecture seule) */}
                     <View style={{ padding: 16, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.95)', borderWidth: 1, borderColor: 'rgba(0,0,0,0.06)' }}>
                         <Text style={{ fontSize: 16, fontWeight: '800' }}>Widgets</Text>
                         {snapshot && snapshot.widgets?.length ? (
