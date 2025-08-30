@@ -264,6 +264,7 @@ export default function DeviceDetail() {
         b.orderIndex = tmp;
         setWidgetsDraft(arr.slice());
     }
+    // dans app/device/[id].tsx — fonction saveWidgets()
     async function saveWidgets() {
         if (!widgetsDraft.length) {
             Alert.alert('Info', "Ajoute au moins un widget avant d'enregistrer.");
@@ -273,8 +274,14 @@ export default function DeviceDetail() {
             const normalized = [...widgetsDraft]
                 .sort((a, b) => a.orderIndex - b.orderIndex)
                 .map((w, i) => ({ ...w, orderIndex: i }));
+
             await widgetsPut(deviceId, normalized);
+
+            // 🔄 IMPORTANT: recharger l'état réel (serveur renvoie aussi via WS mais on force la vérité BDD)
+            await fetchSnapshot(deviceId);
+
             Alert.alert('OK', 'Widgets enregistrés.');
+
             const ww = normalized.find((w) => w.key === 'weather');
             if (ww?.enabled && ww?.config?.city) {
                 fetchWeather(String(ww.config.city), 'metric', deviceId);

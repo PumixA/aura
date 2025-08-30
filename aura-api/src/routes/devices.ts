@@ -258,6 +258,9 @@ const devicesRoutes: FastifyPluginAsync = async (app) => {
 
         const { items } = putWidgetsSchema.parse(req.body)
 
+        // 🔎 LOGS D'ENTRÉE
+        app.log.info({ deviceId, items }, 'PUT widgets: incoming items')
+
         await app.prisma.$transaction(async (px) => {
             for (const it of items) {
                 await px.deviceWidget.upsert({
@@ -265,26 +268,29 @@ const devicesRoutes: FastifyPluginAsync = async (app) => {
                     update: {
                         enabled: it.enabled ?? undefined,
                         orderIndex: it.orderIndex ?? undefined,
-                        config: it.config ?? undefined
+                        config: it.config ?? undefined,
                     },
                     create: {
                         deviceId,
                         key: it.key,
                         enabled: it.enabled ?? true,
                         orderIndex: it.orderIndex ?? 0,
-                        config: it.config ?? undefined
-                    }
+                        config: it.config ?? undefined,
+                    },
                 })
             }
             await px.audit.create({
-                data: { userId, deviceId, type: "WIDGETS_UPDATE", payload: { items } }
+                data: { userId, deviceId, type: 'WIDGETS_UPDATE', payload: { items } }
             })
         })
 
         const widgets = await getWidgetsList(app, deviceId)
 
-        emitWs(app, deviceId, "widgets:update", { items })
-        emitWs(app, deviceId, "state:update", { widgets })
+        // 🔎 LOGS DE SORTIE (ce qui est vraiment en BDD)
+        app.log.info({ deviceId, widgets }, 'PUT widgets: stored list')
+
+        emitWs(app, deviceId, 'widgets:update', { items })
+        emitWs(app, deviceId, 'state:update', { widgets })
 
         return { items: widgets }
     })
