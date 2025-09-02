@@ -2,29 +2,70 @@
 import signal
 import sys
 import time
-import yaml
 import socketio
 import requests
 from typing import Any, Dict
 
-from utils import leds, music, state as dev_state
+# --- Chargeur de config SANS PyYAML (fallback) -----------------------------
+# Supporte un config.yaml simple de la forme:
+# api_url: "http://192.168.1.96:3000"
+# ws_path: "/socket.io"
+# namespace: "/agent"
+# device_id: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+# api_key: "CLE_API"
+# heartbeat_sec: 20
+def _parse_simple_kv_yaml(path: str) -> Dict[str, Any]:
+    cfg: Dict[str, Any] = {}
+    def _unquote(s: str) -> str:
+        s = s.strip()
+        if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
+            return s[1:-1]
+        return s
+    with open(path, "r", encoding="utf-8") as f:
+        for raw in f:
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if ":" not in line:
+                continue
+            k, v = line.split(":", 1)
+            key = k.strip()
+            val = _unquote(v.strip())
+            # casting minimal
+            if val.lower() in ("true", "false"):
+                cfg[key] = (val.lower() == "true")
+            else:
+                try:
+                    if val.isdigit() or (val.startswith("-") and val[1:].isdigit()):
+                        cfg[key] = int(val)
+                    else:
+                        cfg[key] = val
+                except Exception:
+                    cfg[key] = val
+    return cfg
 
-
-# --------- Chargement config ---------
-def load_config():
-    with open("config.yaml") as f:
-        return yaml.safe_load(f)
+def load_config() -> Dict[str, Any]:
+    # Essaie PyYAML si dispo, sinon fallback simple-kv
+    try:
+        import yaml  # type: ignore
+        with open("config.yaml", "r", encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+    except Exception:
+        return _parse_simple_kv_yaml("config.yaml")
 
 cfg = load_config()
 
 # --- Config de base
-API_URL    = cfg["api_url"].rstrip("/")            # ex: http://192.168.1.96:3000
-API_BASE   = f"{API_URL}/api/v1"                   # base REST
-WS_PATH    = cfg.get("ws_path", "/socket.io")      # ex: /socket.io
-NS         = cfg.get("namespace", "/agent")        # ex: /agent
-DEVICE_ID  = cfg["device_id"]
-API_KEY    = cfg["api_key"]
-HEARTBEAT  = int(cfg.get("heartbeat_sec", 20))     # période (sec) HB + state
+API_URL    = str(cfg["api_url"]).rstrip("/")            # ex: http://192.168.1.96:3000
+API_BASE   = f"{API_URL}/api/v1"                        # base REST
+WS_PATH    = str(cfg.get("ws_path", "/socket.io"))      # ex: /socket.io
+NS         = str(cfg.get("namespace", "/agent"))        # ex: /agent
+DEVICE_ID  = str(cfg["device_id"])
+API_KEY    = str(cfg["api_key"])
+HEARTBEAT  = int(cfg.get("heartbeat_sec", 20))          # période (sec) HB + state
+
+# --- Modules utils
+from utils import leds, music, state as dev_state
 
 # --- Client Socket.IO
 sio = socketio.Client(
@@ -33,7 +74,6 @@ sio = socketio.Client(
     logger=False,
     engineio_logger=False
 )
-
 
 # ---------- Utils HTTP ----------
 def _auth_headers():
@@ -61,12 +101,11 @@ def post_heartbeat():
     except Exception as e:
         print("⚠️ Heartbeat HTTP échec:", e)
 
-
 # ---------- State report ----------
 def emit_state():
     """
     Récupère le snapshot local et l’envoie au hub WS.
-    Format attendu: { deviceId, leds?, music?, widgets? } (aplati)
+    Format: { deviceId, leds?, music?, widgets? } (aplati)
     """
     snap = dev_state.snapshot()  # doit retourner un dict
     if not isinstance(snap, dict):
@@ -85,7 +124,6 @@ def emit_state():
     except Exception as e:
         print("⚠️ Émission state:report échouée:", e)
 
-
 # ---------- Helpers LEDs ----------
 def _coerce_leds_payload(raw: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -93,14 +131,14 @@ def _coerce_leds_payload(raw: Dict[str, Any]) -> Dict[str, Any]:
       - leds:update   -> { leds: { on?, color?, brightness?, preset? } } OU { on?, color?, ... }
       - leds:state    -> { on: bool }
       - leds:style    -> { color?, brightness?, preset? }
-    Retourne un dict normalisé: { on?, color?, brightness?, preset? }
+    Retourne: { on?, color?, brightness?, preset? }
     """
     if "leds" in raw and isinstance(raw["leds"], dict):
         p = dict(raw["leds"])
     else:
         p = dict(raw)
 
-    norm = {}
+    norm: Dict[str, Any] = {}
     if "on" in p:          norm["on"] = bool(p["on"])
     if "color" in p:       norm["color"] = str(p["color"])
     if "brightness" in p:  norm["brightness"] = int(p["brightness"])
@@ -111,19 +149,19 @@ def _coerce_leds_payload(raw: Dict[str, Any]) -> Dict[str, Any]:
 def _apply_leds(norm: Dict[str, Any]):
     """
     Applique le payload LEDs normalisé sur le driver.
-    Compatibilité:
-      - Si utils.leds.apply existe -> on lui passe {leds: {...}} pour les anciens drivers
-      - Sinon on tente des méthodes granulaire (set_on/set_color/set_brightness/set_preset)
+    Compat:
+      - Si utils.leds.apply existe -> on lui passe {leds: {...}}
+      - Sinon méthodes granularisées set_on/set_color/set_brightness/set_preset
     """
-    # 1) Driver legacy (fonction apply(payload))
+    # 1) Driver legacy
     if hasattr(leds, "apply") and callable(getattr(leds, "apply")):
         try:
-            leds.apply({"leds": norm})   # compat ascendante
+            leds.apply({"leds": norm})
             return
         except Exception as e:
             print("⚠️ utils.leds.apply a échoué, tentative granulaire:", e)
 
-    # 2) Driver moderne (méthodes explicites)
+    # 2) Driver moderne
     if "on" in norm and hasattr(leds, "set_on"):
         leds.set_on(bool(norm["on"]))
     if "color" in norm and hasattr(leds, "set_color"):
@@ -133,13 +171,11 @@ def _apply_leds(norm: Dict[str, Any]):
     if "preset" in norm and hasattr(leds, "set_preset"):
         leds.set_preset(str(norm["preset"]))
 
-
 def _ack_ok(evt_type: str, data: Dict[str, Any] | None = None):
     sio.emit("ack", {"deviceId": DEVICE_ID, "type": evt_type, "status": "ok", "data": data or {}}, namespace=NS)
 
 def _ack_err(evt_type: str, message: str):
     sio.emit("nack", {"deviceId": DEVICE_ID, "type": evt_type, "reason": message}, namespace=NS)
-
 
 # ---------- Handlers WS ----------
 @sio.event(namespace=NS)
@@ -169,7 +205,6 @@ def on_presence(payload):
     if payload.get("deviceId") not in (None, DEVICE_ID):
         return
     print("👀 Presence:", payload)
-
 
 # ----- LEDs: 3 variantes supportées -----
 @sio.on("leds:update", namespace=NS)
@@ -215,7 +250,6 @@ def on_leds_style(payload):
         print("⚠️ LEDs style error:", e)
         _ack_err("leds:style", str(e))
 
-
 # ----- Music (inchangé) -----
 @sio.on("music:cmd", namespace=NS)
 def on_music(payload):
@@ -228,14 +262,12 @@ def on_music(payload):
         print("⚠️ Music apply error:", e)
         _ack_err("music", str(e))
 
-
 @sio.on("widgets:update", namespace=NS)
 def on_widgets(payload):
     if payload.get("deviceId") not in (None, DEVICE_ID):
         return
     print("[Widgets] update reçu:", payload)
     # si ton agent doit faire quelque chose localement, ajoute la logique ici
-
 
 # ---------- Boucle principale ----------
 _running = True
