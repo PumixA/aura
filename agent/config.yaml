@@ -1,4 +1,4 @@
-api_url: "http://127.0.0.1:3000"20
+api_url: "http://127.0.0.1:3000"
 ws_path: "/socket.io"
 namespace: "/agent"
 device_id: "89e81262-2101-4f6a-9969-40b81a18d929"
