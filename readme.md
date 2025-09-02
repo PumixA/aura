@@ -1,3 +1,7 @@
+Voici le **README.md** complet, mis à jour avec tout ce qu’on a implémenté côté **Mobile** (Expo), la config, le flux d’auth, le gradient/aurora, le temps-réel, et quelques tips de debug.
+
+---
+
 # Aura – Miroir connecté
 
 Système modulaire pour miroir connecté, composé de :
@@ -33,11 +37,9 @@ Système modulaire pour miroir connecté, composé de :
 ## Architecture
 
 ```
-
 Mobile (Expo) ──► REST API ─┬─► Socket.IO /agent ► Agent (Pi)
 Desktop (Electron) ─────────┘
 └─► DB Postgres (Prisma)
-
 ```
 
 * **Mobile & Desktop** : appellent l’API REST (auth JWT) et écoutent les états via WebSocket.
@@ -50,7 +52,6 @@ Desktop (Electron) ─────────┘
 ## Structure du dépôt
 
 ```
-
 aura/
 ├─ aura-api/                 # Backend Node/Fastify/Prisma
 │  ├─ src/
@@ -64,38 +65,39 @@ aura/
 │  │     ├─ control.ts       # relais REST → Socket.IO (leds/music)
 │  │     ├─ pairing.ts       # pairing token & heartbeat agent
 │  │     ├─ weather.ts       # météo publique
-│  │     ├─ audit\_admin.ts   # audit & administration
+│  │     ├─ audit_admin.ts   # audit & administration
 │  │     ├─ health.ts
 │  │     └─ public.ts        # config publique (feature flags)
 │  └─ prisma/schema.prisma
 │
 ├─ agent/                    # Daemon Python (Pi)
-│  ├─ config.yaml            # api\_url, device\_id, api\_key, …
+│  ├─ config.yaml            # api_url, device_id, api_key, …
 │  ├─ main.py                # client Socket.IO + heartbeat
 │  └─ utils/
-│     ├─ leds.py             # stub (remplacer par driver rpi\_ws281x)
+│     ├─ leds.py             # stub (remplacer par driver rpi_ws281x)
 │     ├─ music.py            # stub
 │     └─ state.py            # snapshot d’état
 │
-└─ desktop/                  # UI Electron + React + Vite
-├─ electron/
-│  ├─ main.cjs            # process principal Electron
-│  └─ preload.cjs         # API exposée au renderer
-├─ src/
-│  ├─ api/client.ts       # axios + JWT
-│  ├─ socket.ts           # socket.io-client (auth via handshake.auth)
-│  ├─ store/{auth,ui}.ts
-│  ├─ components/{DevicePicker,LedPanel,MusicPanel}.tsx
-│  ├─ pages/{Login,Dashboard}.tsx
-│  ├─ App.tsx
-│  └─ main.tsx
-├─ .env.development       # VITE\_API\_URL=[http://127.0.0.1:3000](http://127.0.0.1:3000)
-├─ package.json
-└─ vite.config.ts
-
-````
-
-> L’app **mobile** (Expo) vit dans `mobile/` quand créée (non montrée ci-dessus).
+├─ desktop/                  # UI Electron + React + Vite
+│  ├─ electron/
+│  │  ├─ main.cjs
+│  │  └─ preload.cjs
+│  └─ src/
+│     ├─ api/client.ts
+│     ├─ socket.ts
+│     ├─ store/{auth,ui}.ts
+│     ├─ components/{DevicePicker,LedPanel,MusicPanel}.tsx
+│     ├─ pages/{Login,Dashboard}.tsx
+│     ├─ App.tsx
+│     └─ main.tsx
+│
+└─ mobile/                   # App Expo/React Native (ce dépôt)
+   ├─ app/…                  # routeur expo-router
+   ├─ src/api/{client,socket}.ts
+   ├─ src/store/{auth,devices,deviceState}.ts
+   ├─ constants/Colors.ts
+   └─ components/ui.tsx
+```
 
 ---
 
@@ -135,7 +137,7 @@ volumes:
 YML
 
 docker compose up -d
-````
+```
 
 ### 2) API
 
@@ -266,8 +268,8 @@ npm run dev   # tsx watch src/server.ts
 
 * **Pairing (agent)**
 
-    * `POST /api/v1/devices/:deviceId/pairing-token` — générer/rafraîchir un token de pairing
-    * `POST /api/v1/devices/:deviceId/heartbeat` — signal de vie (maj online/lastSeenAt)
+    * `POST /api/v1/devices/:deviceId/pairing-token`
+    * `POST /api/v1/devices/:deviceId/heartbeat`
 
 * **LEDs**
 
@@ -299,28 +301,29 @@ npm run dev   # tsx watch src/server.ts
 
 > Swagger complet : [http://127.0.0.1:3000/docs](http://127.0.0.1:3000/docs)
 
-````
-```markdown
 ---
+
 ## Temps réel (SocketIO)
 
 * **Path** : `/socket.io`
 * **Namespace** : `/agent`
 * **Rooms** : `deviceId`
 * **Authentification** :
-  * **Agent** : header `Authorization: ApiKey <clé>` + `x-device-id: <deviceId>`
-  * **UI (Desktop/Mobile)** : JWT via `handshake.auth.token = "Bearer <JWT>"` ou header
+
+    * **Agent** : header `Authorization: ApiKey <clé>` + `x-device-id: <deviceId>`
+    * **UI (Desktop/Mobile)** : JWT via `handshake.auth.token = "Bearer <JWT>"`
 
 **Événements gérés** :
 
 * `agent:register` — agent s’identifie
 * `ui:join` — UI rejoint un deviceId
-* `ack` / `nack` — retour d’exécution
-* `state:report` (agent → serveur) → état actuel
-* `state:update` (serveur → UIs) — broadcast état vers clients
-* `leds:update` (serveur → agent) — commande LEDs
-* `music:cmd` (serveur → agent) — commande musique
-* `widgets:update` (serveur → agent) — maj widgets
+* `agent:ack` / `agent:nack` — retours d’exécution
+* `state:report` (agent → serveur)
+* `state:update` (serveur → UIs)
+* `leds:update` (serveur → agent)
+* `music:cmd` (serveur → agent)
+* `widgets:update` (serveur → agent)
+* `presence` (serveur → UIs) — online/offline
 
 ---
 
@@ -334,7 +337,7 @@ npm run dev   # tsx watch src/server.ts
 cd aura/agent
 python3 -m venv .venv && source .venv/bin/activate
 pip install "python-socketio[client]" websocket-client requests PyYAML
-````
+```
 
 `config.yaml` :
 
@@ -398,8 +401,7 @@ journalctl -u aura-agent -f
 
 ```bash
 cd aura/desktop
-cp .env.development.example .env.development   # ou crée-le
-# VITE_API_URL=http://127.0.0.1:3000
+cp .env.development.example .env.development   # VITE_API_URL=http://127.0.0.1:3000
 npm i
 npm run dev
 ```
@@ -413,37 +415,99 @@ npm run dev
 
 ## App Mobile (Expo)
 
-**Stack** : Expo (React Native + TS), `expo-router`, Zustand, axios.
+**Stack** : Expo (React Native + TS), `expo-router`, Zustand, axios, socket.io-client.
 
-### Setup
+### État fonctionnel actuel
+
+* **Auth complète** : `register`, `login`, **refresh automatique** (interceptor axios), `logout` (révocation côté API si refresh token dispo + purge locale).
+* **Tokens persistés** via **expo-secure-store**.
+* **Navigation** : layout tabs `(Home, Profile)` avec **fond gradient Aurora** cohérent (dégradés + blobs) sur toutes les pages (Home, Device, Profile, Login, Register).
+* **Home** : liste des devices (`GET /devices`), badge **online/offline**, skeletons, bouton flottant **+** (pairing à venir).
+* **Device detail** : snapshot initial (`/devices/:id/state`), **WebSocket /agent** avec auth JWT dans `handshake.auth.token`, ACK/heartbeat/presence gérés, LEDs/Music/Widgets intégrés.
+* **Profile** : affichage user, **édition prénom/nom** (PUT `/me`), **overlay bloquant** lors de la déconnexion.
+* **Styles** : **GlassCard** + **PrimaryButton** + palette violets/cyans, overlay modal lisible (fond `rgba(0,0,0,0.8)`), contenus ne passent pas sous le header.
+
+> Prochaines bribes (non bloquantes pour la démo) : sessions utilisateur, pairing QR, audits timeline, reorder widgets “propre”.
+
+### Arbo mobile (résumé)
+
+```
+mobile/
+├─ app/
+│  ├─ _layout.tsx                 # boot + SafeAreas + Root stack
+│  ├─ (auth)/{login,register}.tsx # écrans auth stylés Aurora
+│  ├─ (tabs)/
+│  │  ├─ _layout.tsx              # Tabs + TabBar custom + fond transparent
+│  │  ├─ index.tsx                # Home (devices)
+│  │  └─ profile.tsx              # Profil (édition, logout)
+│  └─ device/[id].tsx             # Détail device (LEDs/Music/Widgets + WS)
+├─ src/
+│  ├─ api/{client.ts,socket.ts}
+│  ├─ lib/{env.ts,token.ts,types.ts}
+│  └─ store/{auth.ts,devices.ts,deviceState.ts}
+├─ components/{ui.tsx, AuroraTabBar.tsx, ...}
+└─ constants/Colors.ts
+```
+
+### Environnement & configuration
+
+**.env.development** (ex.) :
+
+```
+EXPO_PUBLIC_API_URL=http://192.168.1.96:3000
+EXPO_PUBLIC_WEB_URL=http://192.168.1.96:3000
+EXPO_PUBLIC_ENV=development
+```
+
+**`src/lib/env.ts`** construit `API_BASE = ${API_URL}/api/v1`.
+
+**Android** (`app.json`) :
+
+```json
+{
+  "expo": {
+    "android": {
+      "edgeToEdgeEnabled": true,
+      "adaptiveIcon": {
+        "backgroundColor": "#ffffff"
+      }
+    }
+  }
+}
+```
+
+### Lancer
 
 ```bash
-cd aura/mobile
+cd mobile
 npm i
-# env
-echo 'EXPO_PUBLIC_API_URL=http://192.168.1.xxx:3000' > .env.development
-echo 'EXPO_PUBLIC_ENV=development' >> .env.development
-
-# dépendances clés
-npx expo install expo-secure-store
-npx expo install expo-barcode-scanner
+npx expo install expo-secure-store expo-barcode-scanner expo-haptics expo-blur expo-linear-gradient
+npm run start  # expo start -c
 ```
 
-**Démarrer** :
+* Ouvrir dans **Expo Go** (Android/iOS).
+* Assurez-vous que le **téléphone voit l’IP LAN** de l’API (éviter 127.0.0.1).
+* **Sockets** : le client calcule l’origin WS depuis `API_BASE` (retire `/api/vX`) et se connecte à `ws://<origin>/agent` avec `auth.token = "Bearer <JWT>"`.
 
-```bash
-npm run start   # expo start -c
-```
+### Auth côté mobile (détails)
 
-* Scanner le QR avec **Expo Go** (Android) ou ouvrir sur iOS
-* Si web : prévoir un adaptateur SecureStore (fallback mémoire)
+* `src/api/client.ts` : axios + interceptors
 
-**Écrans visés** :
+    * injecte `Authorization: Bearer <accessToken>` sur chaque requête
+    * si `401`, tente `/auth/refresh` avec `refreshToken` (SecureStore)
+    * en cas d’échec → purge tokens + rejet
+* `src/lib/token.ts` : persistance **access/refresh** en SecureStore (mémoire + disque)
+* `src/store/auth.ts` :
 
-* Auth (login/register)
-* Dashboard (devices)
-* Device detail (LEDs, musique, widgets, météo)
-* Profil/Préférences
+    * `init()` charge les tokens puis tente `/me` (si OK → user en mémoire)
+    * `login()` / `register()` stockent `tokens`, puis `fetchMe()`
+    * `logout()` appelle `/auth/logout` (best effort) puis purge locale
+
+### Tips & debug
+
+* **Require cycle** `auth.ts -> client.ts -> auth.ts` : **sans impact** (nous avons supprimé la dépendance réciproque critique en exposant `useAuth().accessToken` uniquement côté socket).
+* **Android & LAN** : utiliser l’IP **du PC en Wi-Fi** (ex. `192.168.1.x`), même réseau que le téléphone.
+* **CORS / WS** : côté API, vérifier `cors` & `allowRequest`/`origins` pour Socket.IO si vous serrez la prod.
 
 ---
 
@@ -528,11 +592,7 @@ docker run --rm -p 3000:3000 --env-file .env --network host aura-api:latest
 * [ ] **JWT\_SECRET** fort et stocké en secret
 * [ ] **CORS** et **origins Socket.IO** limités
 * [ ] **/\_\_debug/emit** désactivé en prod
-* [ ] \*\*Clés API
-
-
-devices\*\* : jamais stockées en clair (hash bcrypt)
-
+* [ ] **Clés API devices** : jamais stockées en clair (hash/bcrypt côté DB si conservées)
 * [ ] **TLS** (HTTPS) via proxy
 * [ ] **Backups** réguliers de Postgres
 * [ ] **Logs** + monitoring
@@ -554,4 +614,4 @@ Aura | Delorme Melvin.
 * `devices.ts` gère ApiKey par device.
 * `control.ts` sert de relais REST → WS.
 * L’agent authentifie via **`Authorization: ApiKey <clé>`** + header `x-device-id`.
-* L’UI transmet le JWT via `handshake.auth.token`.
+* L’UI (Mobile/Desktop) transmet le JWT via `handshake.auth.token`.
