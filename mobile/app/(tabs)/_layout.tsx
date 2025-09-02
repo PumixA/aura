@@ -1,4 +1,3 @@
-// app/(tabs)/_layout.tsx
 import React from 'react';
 import { View, ActivityIndicator, StyleSheet, Dimensions } from 'react-native';
 import { Tabs, Redirect } from 'expo-router';
@@ -16,7 +15,6 @@ export default function TabsLayout() {
     const initialized = useAuth((s) => s.initialized);
     const user        = useAuth((s) => s.user);
 
-    // Splash pendant l'init
     if (!initialized) {
         return (
             <LinearGradient colors={['#1a1440', '#1b1f5c', '#0d1030']} style={styles.fill}>
@@ -28,18 +26,14 @@ export default function TabsLayout() {
         );
     }
 
-    // Redirection si non connecté
     if (!user) return <Redirect href="/(auth)/login" />;
 
-    // Layout principal des tabs
     return (
         <LinearGradient colors={['#1a1440', '#1b1f5c', '#0d1030']} style={styles.fill}>
             <AuroraBackground />
 
-            {/* décale sous la status bar */}
             <SafeAreaView edges={['top']} style={styles.safe}>
                 <Tabs
-                    // 👇 c'est ICI (prop du navigator) qu'on rend les scènes transparentes
                     sceneContainerStyle={{ backgroundColor: 'transparent' }}
                     screenOptions={{ headerShown: false }}
                     tabBar={(props) => <AuroraTabBar {...props} />}
@@ -48,14 +42,12 @@ export default function TabsLayout() {
                     <Tabs.Screen name="profile" options={{ title: 'Profil'  }} />
                 </Tabs>
 
-                {/* espace bas pour confort sous la TabBar */}
                 <View style={{ height: insets.bottom + TABBAR_CLEARANCE }} />
             </SafeAreaView>
         </LinearGradient>
     );
 }
 
-/* ---------- Fond "aurora" (blobs) ---------- */
 function AuroraBackground() {
     return (
         <View pointerEvents="none" style={StyleSheet.absoluteFill}>

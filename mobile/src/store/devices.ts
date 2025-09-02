@@ -1,4 +1,3 @@
-// src/store/devices.ts
 import { create } from 'zustand';
 import { api } from '../api/client';
 

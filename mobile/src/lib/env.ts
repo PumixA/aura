@@ -1,4 +1,3 @@
-// src/lib/env.ts
 export type AuraEnv = 'development' | 'production' | 'test';
 
 const get = (key: string, fallback?: string) => {

@@ -1,4 +1,3 @@
-// app/(tabs)/profile.tsx
 import React, { useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, ActivityIndicator, Alert, StyleSheet, Dimensions } from 'react-native';
 import * as Haptics from 'expo-haptics';
@@ -21,7 +20,6 @@ export default function Profile() {
     const updateMe = useAuth((s) => s.updateMe);
     const logout   = useAuth((s) => s.logout);
 
-    // local UI state
     const [editing, setEditing] = useState(false);
     const [firstName, setFirst] = useState(user?.firstName ?? '');
     const [lastName,  setLast]  = useState(user?.lastName ?? '');
@@ -45,7 +43,7 @@ export default function Profile() {
         }
 
         try {
-            await updateMe(payload);               // -> PUT /me (Swagger)
+            await updateMe(payload);
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
             setEditing(false);
         } catch (e) {
@@ -69,13 +67,10 @@ export default function Profile() {
 
     return (
         <View style={[styles.fill]}>
-            {/* --- Fond gradient + blobs aurora (comme sur les autres pages) --- */}
             <LinearGradient colors={['#1a1440', '#1b1f5c', '#0d1030']} style={StyleSheet.absoluteFill} />
             <AuroraBackground />
 
-            {/* Contenu transparent au-dessus du fond */}
             <View style={[styles.fill, styles.transparent, { paddingTop: insets.top + 8 }]}>
-                {/* Header / avatar */}
                 <View style={[styles.header, { paddingBottom: 6 }]}>
                     <View style={styles.avatar}>
                         <Text style={styles.avatarText}>{initials.toUpperCase()}</Text>
@@ -95,7 +90,6 @@ export default function Profile() {
                     ) : null}
                 </View>
 
-                {/* Infos / édition */}
                 <View style={{ paddingHorizontal: 16, gap: 12 }}>
                     <GlassCard>
                         {!editing ? (
@@ -130,7 +124,6 @@ export default function Profile() {
                         )}
                     </GlassCard>
 
-                    {/* Sécurité */}
                     <GlassCard>
                         <View style={{ gap: 8 }}>
                             <Text style={styles.sectionTitle}>Sécurité</Text>
@@ -147,7 +140,6 @@ export default function Profile() {
                     <View style={{ height: 24 + insets.bottom }} />
                 </View>
 
-                {/* Overlay blocant pendant la déconnexion */}
                 {signingOut && (
                     <View pointerEvents="auto" style={styles.blocker}>
                         <ActivityIndicator size="large" color="#fff" />
@@ -159,7 +151,6 @@ export default function Profile() {
     );
 }
 
-/* ---------- Backdrop aurora (même logique que les autres pages) ---------- */
 function AuroraBackground() {
     return (
         <View pointerEvents="none" style={StyleSheet.absoluteFill}>
@@ -185,7 +176,6 @@ function AuroraBackground() {
     );
 }
 
-/* ---------- Petits sous-composants ---------- */
 
 function Row({ label, value }: { label: string; value: string }) {
     return (
@@ -219,7 +209,6 @@ function Input(props: any) {
     );
 }
 
-/* ---------- Styles ---------- */
 
 const styles = StyleSheet.create({
     fill: { flex: 1 },

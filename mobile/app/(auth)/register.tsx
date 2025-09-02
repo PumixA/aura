@@ -1,4 +1,3 @@
-// app/(auth)/register.tsx
 import React, { useState, useMemo } from 'react';
 import {
     KeyboardAvoidingView,
@@ -61,7 +60,6 @@ export default function Register() {
 
     return (
         <View style={{ flex: 1 }}>
-            {/* Fond gradient + blobs (cohérent avec les autres pages) */}
             <LinearGradient colors={['#1a1440', '#1b1f5c', '#0d1030']} style={StyleSheet.absoluteFill} />
             <AuroraBackground />
 
@@ -75,7 +73,6 @@ export default function Register() {
                         <Text style={styles.subtitle}>Rejoins l’aventure ✨</Text>
                     </View>
 
-                    {/* Prénom (optionnel) */}
                     <View style={styles.inputWrap}>
                         <Ionicons name="person-outline" size={18} color="rgba(255,255,255,0.8)" style={styles.leftIcon} />
                         <TextInput
@@ -88,7 +85,6 @@ export default function Register() {
                         />
                     </View>
 
-                    {/* Nom (optionnel) */}
                     <View style={styles.inputWrap}>
                         <Ionicons name="person-circle-outline" size={18} color="rgba(255,255,255,0.8)" style={styles.leftIcon} />
                         <TextInput
@@ -101,7 +97,6 @@ export default function Register() {
                         />
                     </View>
 
-                    {/* Email */}
                     <View style={styles.inputWrap}>
                         <Ionicons name="mail-outline" size={18} color="rgba(255,255,255,0.8)" style={styles.leftIcon} />
                         <TextInput
@@ -117,7 +112,6 @@ export default function Register() {
                         />
                     </View>
 
-                    {/* Mot de passe */}
                     <View style={styles.inputWrap}>
                         <Ionicons name="lock-closed-outline" size={18} color="rgba(255,255,255,0.8)" style={styles.leftIcon} />
                         <TextInput
@@ -137,7 +131,6 @@ export default function Register() {
                         </Pressable>
                     </View>
 
-                    {/* CTA */}
                     <PrimaryButton
                         label={loading ? 'Création…' : 'Créer mon compte'}
                         onPress={onSubmit}
@@ -145,7 +138,6 @@ export default function Register() {
                         style={{ marginTop: 10 } as any}
                     />
 
-                    {/* Lien login */}
                     <Pressable onPress={() => router.back()} style={({ pressed }) => [styles.linkBtn, pressed && { opacity: 0.92 }]}>
                         <Text style={styles.linkText}>Déjà un compte ? Se connecter</Text>
                     </Pressable>
@@ -161,7 +153,6 @@ export default function Register() {
     );
 }
 
-/* ---- Fond aurora (blobs) identique aux autres écrans ---- */
 function AuroraBackground() {
     return (
         <View pointerEvents="none" style={StyleSheet.absoluteFill}>
@@ -187,7 +178,6 @@ function AuroraBackground() {
     );
 }
 
-/* ---- Styles ---- */
 const styles = StyleSheet.create({
     scroll: {
         flexGrow: 1,
@@ -216,7 +206,7 @@ const styles = StyleSheet.create({
         borderRadius: 14,
         borderWidth: 1,
         borderColor: 'rgba(255,255,255,0.22)',
-        backgroundColor: 'rgba(15,16,24,0.28)', // verre sombre
+        backgroundColor: 'rgba(15,16,24,0.28)',
         height: 52,
         paddingHorizontal: 12,
         marginTop: 14,

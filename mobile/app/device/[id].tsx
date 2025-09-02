@@ -1,4 +1,3 @@
-// app/device/[id].tsx
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import {
     View,
@@ -47,7 +46,6 @@ const DEFAULT_WIDGETS: WidgetItem[] = [
     { key: 'leds',    enabled: true, orderIndex: 3, config: {} },
 ];
 
-// helpers
 function isHex(value: string) { return /^#[0-9A-Fa-f]{6}$/.test(value.trim()); }
 function formatAgo(iso?: string | null): string {
     if (!iso) return 'jamais';
@@ -62,7 +60,6 @@ function formatAgo(iso?: string | null): string {
     return `il y a ${h} h`;
 }
 
-/* ---------------- Mini composants ---------------- */
 
 function GhostButton({ label, onPress, style }: { label: string; onPress?: () => void; style?: any }) {
     return (
@@ -124,7 +121,6 @@ function IconTile({ emoji, label, onPress }: { emoji: string; label: string; onP
     );
 }
 
-// Header composés
 function HeaderTitle({ name, online }: { name?: string; online?: boolean }) {
     return (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, maxWidth: 240 }}>
@@ -151,13 +147,11 @@ function KebabMenu({ onRename, onDelete }: { onRename: () => void; onDelete: () 
                 <Ionicons name="ellipsis-vertical" size={18} color="#fff" />
             </Pressable>
 
-            {/* Bottom sheet glass */}
             <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
                 <View style={styles.modalBackdrop}>
                     <Pressable style={{ flex: 1 }} onPress={() => setOpen(false)} />
                     <View style={[styles.sheetWrap, { paddingBottom: insets.bottom + 12 }]}>
                         <GlassCard padding={16} intensity={40} overlayOpacity={0.28} style={{ gap: 12 }}>
-                            {/* Actions en haut */}
                             <PrimaryButton
                                 label="Renommer"
                                 onPress={() => {
@@ -184,10 +178,8 @@ function KebabMenu({ onRename, onDelete }: { onRename: () => void; onDelete: () 
                                 <Text style={{ color: '#fff', fontWeight: '900' }}>Dissocier</Text>
                             </Pressable>
 
-                            {/* Séparateur léger */}
                             <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.12)', marginVertical: 2 }} />
 
-                            {/* Fermer bien séparé, étiré */}
                             <GhostButton label="Fermer" onPress={() => setOpen(false)} style={{ alignSelf: 'stretch' }} />
                         </GlassCard>
                     </View>
@@ -197,7 +189,6 @@ function KebabMenu({ onRename, onDelete }: { onRename: () => void; onDelete: () 
     );
 }
 
-// Sheet générique — version “glass” lisible
 function Sheet({
                    visible, onClose, title, children,
                }: { visible: boolean; onClose: () => void; title: string; children: React.ReactNode }) {
@@ -219,7 +210,6 @@ function Sheet({
     );
 }
 
-/* ------------------- Main ------------------- */
 export default function DeviceDetail() {
     const router = useRouter();
     const navigation = useNavigation();
@@ -227,7 +217,6 @@ export default function DeviceDetail() {
     const deviceId = String(params.id);
     const insets = useSafeAreaInsets();
 
-    // stores
     const snapshot = useDeviceState((s) => s.byId[deviceId]?.data);
     const loading = useDeviceState((s) => s.byId[deviceId]?.loading) ?? false;
     const error = useDeviceState((s) => s.byId[deviceId]?.error);
@@ -244,12 +233,10 @@ export default function DeviceDetail() {
     const weatherLoading = useDeviceState((s) => s.byId[deviceId]?.weatherLoading);
     const weatherError = useDeviceState((s) => s.byId[deviceId]?.weatherError);
 
-    // devices meta
     const devices = useDevices((s) => s.items);
     const refreshDevices = useDevices((s) => s.fetchDevices);
     const deviceMeta = useMemo(() => devices.find((d) => d.id === deviceId), [devices, deviceId]);
 
-    // UI local
     const [renaming, setRenaming] = useState(false);
     const [newName, setNewName] = useState(deviceMeta?.name ?? '');
     const [refreshing, setRefreshing] = useState(false);
@@ -258,11 +245,9 @@ export default function DeviceDetail() {
     const [openMusic, setOpenMusic] = useState(false);
     const [openWidgets, setOpenWidgets] = useState(false);
 
-    // LEDs inputs
     const [colorText, setColorText] = useState(snapshot?.leds.color ?? '#FFFFFF');
     const [brightnessDraft, setBrightnessDraft] = useState<number>(snapshot?.leds.brightness ?? 50);
 
-    // Widgets draft + DnD état
     const [widgetsDraft, setWidgetsDraft] = useState<WidgetItem[]>(snapshot?.widgets ?? []);
     const [itemHeight, setItemHeight] = useState(64);
     const dragIndexRef = useRef<number | null>(null);
@@ -271,7 +256,6 @@ export default function DeviceDetail() {
     const weatherWidget = useMemo(() => widgetsDraft.find((w) => w.key === 'weather'), [widgetsDraft]);
     const [weatherCity, setWeatherCity] = useState((weatherWidget?.config?.city as string) || 'Paris');
 
-    // init + sockets
     useEffect(() => {
         let mounted = true;
         (async () => {
@@ -311,11 +295,10 @@ export default function DeviceDetail() {
         }
     }, [snapshot?.widgets, deviceId, fetchWeather]);
 
-    // header
     useEffect(() => {
         navigation.setOptions({
             headerShown: true,
-            headerTransparent: true, // on garde le gradient derrière, mais on décale le contenu
+            headerTransparent: true,
             headerTitle: () => <HeaderTitle name={deviceMeta?.name} online={deviceMeta?.online} />,
             headerRight: () => (
                 <KebabMenu
@@ -345,7 +328,6 @@ export default function DeviceDetail() {
         } as any);
     }, [navigation, deviceMeta?.name, deviceMeta?.online, deleteDevice, deviceId, refreshDevices, router]);
 
-    // pull to refresh
     const onRefresh = useCallback(async () => {
         setRefreshing(true);
         try {
@@ -356,7 +338,6 @@ export default function DeviceDetail() {
         }
     }, [deviceId, fetchSnapshot, refreshDevices]);
 
-    // actions
     async function onConfirmRename() {
         const name = newName.trim();
         if (!name) return;
@@ -371,7 +352,6 @@ export default function DeviceDetail() {
         }
     }
 
-    // LEDs
     async function handleToggle() {
         try {
             await ledsToggle(deviceId, !snapshot?.leds.on);
@@ -424,7 +404,6 @@ export default function DeviceDetail() {
         }
     }
 
-    // Musique
     async function togglePlayPause() {
         if (!snapshot) return;
         const next = snapshot.music.status === 'play' ? 'pause' : 'play';
@@ -464,7 +443,6 @@ export default function DeviceDetail() {
         }
     }
 
-    // Widgets (toggle + DnD)
     function toggleWidget(key: WidgetItem['key']) {
         setWidgetsDraft((prev) => prev.map((w) => (w.key === key ? { ...w, enabled: !w.enabled } : w)));
     }
@@ -510,7 +488,6 @@ export default function DeviceDetail() {
     }
     function addDefaultWidgets() { setWidgetsDraft(DEFAULT_WIDGETS); }
 
-    // DnD rudimentaire
     const panRespondersRef = useRef<Record<number, any>>({});
     const isDraggingRef = useRef(false);
     const [draggingOrder, setDraggingOrder] = useState<number | null>(null);
@@ -560,7 +537,6 @@ export default function DeviceDetail() {
     const ledsOn = !!snapshot?.leds.on;
     const isPlaying = snapshot?.music.status === 'play';
 
-    /* ---------------- Render avec fond gradient + contenu décalé ---------------- */
     return (
         <LinearGradient colors={['#1a1440', '#1b1f5c', '#0d1030']} style={styles.fill}>
             <AuroraBackground />
@@ -568,7 +544,7 @@ export default function DeviceDetail() {
             <Stack.Screen
                 options={{
                     headerShown: true,
-                    headerTransparent: true, // gradient sous le header
+                    headerTransparent: true,
                     headerTitleAlign: 'left',
                     headerTintColor: '#fff',
                 }}
@@ -595,7 +571,6 @@ export default function DeviceDetail() {
                         paddingHorizontal: 16,
                         paddingBottom: 40,
                         gap: 16,
-                        // 👉 Décalage sous le header (ne passe plus derrière)
                         paddingTop: (insets.top || 0) + (HEADER_HEIGHT as number) + 6,
                     }}
                     refreshControl={
@@ -603,7 +578,6 @@ export default function DeviceDetail() {
                     }
                     style={{ backgroundColor: 'transparent' }}
                 >
-                    {/* HERO / Raccourcis rapides */}
                     <GlassCard style={{ gap: 14 }} padding={18} intensity={30} overlayOpacity={0.24}>
                         <Text style={{ fontSize: 18, fontWeight: '900', color: '#fff' }}>Raccourcis</Text>
                         <View style={{ flexDirection: 'row', gap: 12 }}>
@@ -625,7 +599,6 @@ export default function DeviceDetail() {
                         </Text>
                     </GlassCard>
 
-                    {/* Icônes → Popups */}
                     <GlassCard style={{ gap: 12 }} padding={16} intensity={30} overlayOpacity={0.24}>
                         <Text style={{ fontSize: 16, fontWeight: '900', color: '#fff' }}>Actions</Text>
                         <View style={{ flexDirection: 'row', gap: 12 }}>
@@ -635,7 +608,6 @@ export default function DeviceDetail() {
                         </View>
                     </GlassCard>
 
-                    {/* Météo si active */}
                     {widgetsDraft.find((w) => w.key === 'weather' && w.enabled) && (
                         <GlassCard style={{ gap: 8 }} padding={16} intensity={30} overlayOpacity={0.24}>
                             <Text style={{ fontSize: 16, fontWeight: '900', color: '#fff' }}>Météo — {weatherCity}</Text>
@@ -660,7 +632,6 @@ export default function DeviceDetail() {
                         </GlassCard>
                     )}
 
-                    {/* Renommer inline si demandé */}
                     {renaming && (
                         <GlassCard style={{ gap: 12 }} padding={16} intensity={30} overlayOpacity={0.24}>
                             <Text style={{ fontWeight: '900', fontSize: 16, color: '#fff' }}>Renommer le miroir</Text>
@@ -680,17 +651,13 @@ export default function DeviceDetail() {
                 </ScrollView>
             )}
 
-            {/* SHEETS */}
-            {/* LEDs */}
             <Sheet visible={openLEDs} onClose={() => setOpenLEDs(false)} title="LEDs">
                 {!snapshot ? (
                     <Text style={{ color: '#fff' }}>Chargement…</Text>
                 ) : (
                     <View style={{ gap: 16 }}>
-                        {/* On/Off */}
                         <PillButton label={snapshot.leds.on ? 'Éteindre' : 'Allumer'} onPress={handleToggle} active={snapshot.leds.on} />
 
-                        {/* Couleurs – palette */}
                         <View>
                             <Text style={{ fontWeight: '800', marginBottom: 8, color: '#fff' }}>Couleur rapide</Text>
                             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
@@ -709,7 +676,6 @@ export default function DeviceDetail() {
                             </View>
                         </View>
 
-                        {/* Couleur libre */}
                         <View>
                             <Text style={{ fontWeight: '800', marginBottom: 6, color: '#fff' }}>Couleur (#RRGGBB)</Text>
                             <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
@@ -723,7 +689,6 @@ export default function DeviceDetail() {
                             </View>
                         </View>
 
-                        {/* Luminosité – slider */}
                         <View>
                             <Text style={{ fontWeight: '800', marginBottom: 6, color: '#fff' }}>Luminosité : {brightnessDraft}%</Text>
                             <Slider
@@ -737,7 +702,6 @@ export default function DeviceDetail() {
                             />
                         </View>
 
-                        {/* Presets */}
                         <View>
                             <Text style={{ fontWeight: '800', marginBottom: 6, color: '#fff' }}>Presets</Text>
                             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
@@ -756,7 +720,6 @@ export default function DeviceDetail() {
                 )}
             </Sheet>
 
-            {/* Musique */}
             <Sheet visible={openMusic} onClose={() => setOpenMusic(false)} title="Musique">
                 {!snapshot ? (
                     <Text style={{ color: '#fff' }}>Chargement…</Text>
@@ -773,7 +736,6 @@ export default function DeviceDetail() {
                             <GhostButton label="⟩⟩" onPress={nextTrack} style={{ minWidth: 56 }} />
                         </View>
 
-                        {/* Volume */}
                         <View>
                             <Text style={{ fontWeight: '800', marginBottom: 6, color: '#fff' }}>Volume : {snapshot.music.volume}</Text>
                             <Slider
@@ -794,7 +756,6 @@ export default function DeviceDetail() {
                 )}
             </Sheet>
 
-            {/* Widgets (DnD simple) */}
             <Sheet visible={openWidgets} onClose={() => setOpenWidgets(false)} title="Widgets">
                 <View style={{ gap: 12 }}>
                     {!widgetsDraft.length ? (
@@ -866,7 +827,6 @@ export default function DeviceDetail() {
     );
 }
 
-/* ---------- Fond "aurora" ---------- */
 function AuroraBackground() {
     return (
         <View pointerEvents="none" style={StyleSheet.absoluteFill}>
@@ -892,7 +852,6 @@ function AuroraBackground() {
     );
 }
 
-/* ---------- Input “glass” réutilisable ---------- */
 function GlassInput({
                         value, onChangeText, placeholder, style,
                     }: {
@@ -920,7 +879,6 @@ function GlassInput({
     );
 }
 
-/* ---------------- Styles ---------------- */
 const styles = StyleSheet.create({
     fill: { flex: 1 },
     center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
@@ -933,7 +891,7 @@ const styles = StyleSheet.create({
 
     modalBackdrop: {
         flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.8)', // un poil plus sombre pour la lisibilité
+        backgroundColor: 'rgba(0,0,0,0.8)',
         justifyContent: 'flex-end',
     },
     sheetWrap: {

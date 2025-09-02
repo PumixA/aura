@@ -1,11 +1,10 @@
-// src/api/client.ts
 import axios, { AxiosError } from 'axios';
 import { API_BASE } from '../lib/env';
 import {
     loadTokens, saveTokens, clearTokens,
     getAccessTokenSync, getRefreshTokenSync, setAccessTokenSync,
 } from '../lib/token';
-import { emitAccessToken } from './authBridge'; // 👈 nouveau import
+import { emitAccessToken } from './authBridge';
 
 export const api = axios.create({ baseURL: API_BASE, timeout: 12000 });
 
@@ -34,7 +33,7 @@ api.interceptors.response.use(
                 const rt = getRefreshTokenSync();
                 if (!rt) {
                     await clearTokens();
-                    emitAccessToken(null);           // 👈 au lieu de useAuth…
+                    emitAccessToken(null);
                     return Promise.reject(error);
                 }
                 refreshing = (async () => {
@@ -44,7 +43,7 @@ api.interceptors.response.use(
                         if (tokens?.accessToken && tokens?.refreshToken) {
                             setAccessTokenSync(tokens.accessToken);
                             await saveTokens(tokens);
-                            emitAccessToken(tokens.accessToken); // 👈 notifier le store
+                            emitAccessToken(tokens.accessToken);
                             return tokens.accessToken;
                         }
                         await clearTokens();

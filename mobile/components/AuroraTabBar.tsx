@@ -1,4 +1,3 @@
-// components/AuroraTabBar.tsx
 import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { BlurView } from 'expo-blur';
@@ -10,10 +9,8 @@ export default function AuroraTabBar({ state, descriptors, navigation }: BottomT
     const insets = useSafeAreaInsets();
 
     return (
-        // On n'utilise PAS d'absolu -> la TabBar prend sa place dans le layout
         <SafeAreaView edges={['bottom']} style={[styles.wrapper, { paddingBottom: Math.max(insets.bottom, 6) }]}>
             <View style={styles.shadow}>
-                {/* Fond glass: juste le blur + une bordure très légère. AUCUN background rectangulaire. */}
                 <BlurView intensity={35} tint="dark" style={styles.bar}>
                     <View style={styles.inner}>
                         {state.routes.map((route, index) => {
@@ -80,7 +77,6 @@ const styles = StyleSheet.create({
     shadow: {
         marginHorizontal: 16,
         borderRadius: 22,
-        // ombre douce (glass)
         shadowColor: '#000',
         shadowOpacity: 0.25,
         shadowRadius: 18,
@@ -92,7 +88,7 @@ const styles = StyleSheet.create({
         borderRadius: 22,
         borderWidth: 1,
         borderColor: 'rgba(255,255,255,0.10)',
-        backgroundColor: 'transparent', // 👈 plus aucun pavé
+        backgroundColor: 'transparent',
     },
     inner: {
         flexDirection: 'row',

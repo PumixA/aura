@@ -1,4 +1,3 @@
-// src/store/deviceState.ts
 import { create } from 'zustand';
 import { api } from '../api/client';
 import { createDeviceSocket, DeviceSocket } from '../api/socket';
@@ -35,7 +34,6 @@ type PerDevice = {
     loading: boolean;
     error?: string | null;
 
-    // météo (optionnel)
     weather?: {
         city: string;
         units: 'metric' | 'imperial';
@@ -48,12 +46,10 @@ type PerDevice = {
     weatherLoading?: boolean;
     weatherError?: string | null;
 
-    // realtime
     wsStatus?: 'disconnected' | 'connecting' | 'connected';
     wsError?: string | null;
     agentOnline?: boolean;
 
-    // interne
     _socket?: DeviceSocket | null;
     _onlineTimer?: ReturnType<typeof setTimeout> | null;
 };
@@ -65,26 +61,21 @@ interface DeviceStateStore {
     renameDevice: (deviceId: string, name: string) => Promise<{ id: string; name: string }>;
     deleteDevice: (deviceId: string) => Promise<void>;
 
-    // LEDs
     ledsToggle: (deviceId: string, on: boolean) => Promise<void>;
     ledsStyle: (deviceId: string, patch: Partial<Pick<LedState, 'color' | 'brightness' | 'preset'>>) => Promise<void>;
 
-    // Music
     musicCmd: (deviceId: string, action: 'play' | 'pause' | 'next' | 'prev') => Promise<void>;
     musicSetVolume: (deviceId: string, value: number) => Promise<void>;
 
-    // Widgets
     widgetsPut: (deviceId: string, items: WidgetItem[]) => Promise<WidgetItem[]>;
 
-    // Weather
     fetchWeather: (city: string, units?: 'metric' | 'imperial', deviceIdForCache?: string) => Promise<void>;
 
-    // Realtime
     openSocket: (deviceId: string) => void;
     closeSocket: (deviceId: string) => void;
 }
 
-const ONLINE_TTL_MS = 35_000; // heartbeat=20s → TTL ~35s
+const ONLINE_TTL_MS = 15_000;
 
 function armOnlineTimer(
     deviceId: string,
@@ -119,7 +110,6 @@ function armOnlineTimer(
 export const useDeviceState = create<DeviceStateStore>((set, get) => ({
     byId: {},
 
-    // ───────────────── fetch snapshot (+ fallback online par lastSeenAt)
     fetchSnapshot: async (deviceId: string) => {
         const cur = (get().byId[deviceId] ?? { loading: false }) as PerDevice;
         set({ byId: { ...get().byId, [deviceId]: { ...cur, loading: true, error: null } } });
@@ -140,7 +130,6 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
                 },
             });
 
-            // Fallback: si pas encore d'événement socket, interroge l'API pour l'état online calculé depuis lastSeenAt.
             try {
                 const { data: live } = await api.get<{ online: boolean; lastSeenAt: string | null }>(
                     `/devices/${deviceId}/online`
@@ -155,7 +144,6 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
                     });
                 }
             } catch {
-                // non bloquant
             }
         } catch {
             set({
@@ -183,7 +171,6 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
         set({ byId: copy });
     },
 
-    // ─── LEDs
     ledsToggle: async (deviceId, on) => {
         const state = get();
         const prev = state.byId[deviceId]?.data;
@@ -222,7 +209,6 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
         }
     },
 
-    // ─── Music
     musicCmd: async (deviceId, action) => {
         const state = get();
         const prev = state.byId[deviceId]?.data;
@@ -259,8 +245,6 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
             throw new Error('MUSIC_VOLUME_FAILED');
         }
     },
-
-    // ─── Widgets
     widgetsPut: async (deviceId, items) => {
         const state = get();
         const prev = state.byId[deviceId]?.data;
@@ -280,7 +264,6 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
         }
     },
 
-    // ─── Weather
     fetchWeather: async (city, units = 'metric', deviceIdForCache) => {
         const key = deviceIdForCache ?? '__global__';
         const cur = (get().byId[key] ?? { loading: false }) as PerDevice;
@@ -293,7 +276,6 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
         }
     },
 
-    // ─── Realtime
     openSocket: (deviceId) => {
         const st = get();
         const per = (st.byId[deviceId] ?? { loading: false }) as PerDevice;
@@ -320,7 +302,6 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
             }
         });
 
-        // — Connexion
         sock.on('connect', () => {
             sock.emit('ui:join', { deviceId });
             set({
@@ -329,7 +310,6 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
                     [deviceId]: { ...get().byId[deviceId], wsStatus: 'connected', wsError: null }
                 }
             });
-            // On attend presence/ack/state pour armer le timer online
         });
 
         sock.on('connect_error', (err: any) => {
@@ -362,7 +342,6 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
             });
         });
 
-        // — État live (state:update ou state:report relai)
         sock.on('state:update', (payload: any) => {
             const raw = payload?.state ?? payload ?? {};
             const cur = get().byId[deviceId]?.data;
@@ -386,11 +365,9 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
                 }
             });
 
-            // signal de vie → armer le timer
             armOnlineTimer(deviceId, get, (p) => set(p as any));
         });
 
-        // — ACK/NACK/heartbeat/presence → signal de vie
         sock.on('agent:ack', () => armOnlineTimer(deviceId, get, (p) => set(p as any)));
         sock.on('agent:heartbeat', () => armOnlineTimer(deviceId, get, (p) => set(p as any)));
         sock.on('presence', (msg: any) => {

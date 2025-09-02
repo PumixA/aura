@@ -1,4 +1,3 @@
-// app/(tabs)/index.tsx
 import React, { useEffect, useMemo, useCallback } from 'react';
 import {
     View,
@@ -113,18 +112,14 @@ export default function Home() {
         );
     };
 
-    /* --------- rendu --------- */
     return (
         <LinearGradient
             colors={['#1a1440', '#1b1f5c', '#0d1030']}
             style={styles.fill}
         >
-            {/* Blobs pour continuité visuelle avec (tabs)/_layout */}
             <AuroraBackground />
 
-            {/* Contenu transparent au-dessus du gradient */}
             <View style={styles.screen}>
-                {/* ÉTAT : loading (skeleton) */}
                 {loading && !items.length ? (
                     <>
                         {ListHeader}
@@ -140,7 +135,6 @@ export default function Home() {
                     </>
                 ) : null}
 
-                {/* ÉTAT : erreur vide */}
                 {error && !items.length ? (
                     <View style={[styles.center, { paddingHorizontal: 16 }]}>
                         <GlassCard style={{ alignSelf: 'stretch' }}>
@@ -155,7 +149,6 @@ export default function Home() {
                     </View>
                 ) : null}
 
-                {/* ÉTAT : aucun appareil */}
                 {!loading && !error && !items.length ? (
                     <View style={[styles.center, { paddingHorizontal: 16 }]}>
                         {ListHeader}
@@ -172,7 +165,6 @@ export default function Home() {
                     </View>
                 ) : null}
 
-                {/* LISTE */}
                 {!!items.length ? (
                     <>
                         <FlatList
@@ -209,7 +201,6 @@ export default function Home() {
     );
 }
 
-/* ---------- Arrière-plan "aurora" local ---------- */
 function AuroraBackground() {
     return (
         <View pointerEvents="none" style={StyleSheet.absoluteFill}>
@@ -235,7 +226,6 @@ function AuroraBackground() {
     );
 }
 
-/* ============ FAB “+” ============ */
 function FloatingPlus({ onPress, bottomInset }: { onPress: () => void; bottomInset: number }) {
     return (
         <Pressable
@@ -262,8 +252,6 @@ function FloatingPlus({ onPress, bottomInset }: { onPress: () => void; bottomIns
     );
 }
 
-/* ===================== Styles ===================== */
-
 const styles = StyleSheet.create({
     fill: { flex: 1 },
     screen: { flex: 1, backgroundColor: 'transparent' },
@@ -275,7 +263,6 @@ const styles = StyleSheet.create({
         opacity: 1,
     },
 
-    /* Header */
     headerWrap: {
         paddingHorizontal: 16,
         paddingTop: 8,
@@ -302,7 +289,6 @@ const styles = StyleSheet.create({
         fontSize: 12,
     },
 
-    /* Compteur */
     countBadge: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -320,7 +306,6 @@ const styles = StyleSheet.create({
         fontSize: 13,
     },
 
-    /* Cards */
     cardTitle: {
         fontSize: 18,
         fontWeight: '800',
@@ -353,7 +338,6 @@ const styles = StyleSheet.create({
         bottom: -10,
     },
 
-    /* Skeletons */
     skeletonCard: { marginBottom: 12 },
     skeletonTitle: {
         height: 18,
@@ -369,7 +353,6 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(255,255,255,0.10)',
     },
 
-    /* FAB */
     fab: {
         position: 'absolute',
         zIndex: 40,
@@ -389,7 +372,6 @@ const styles = StyleSheet.create({
         borderColor: 'rgba(255,255,255,0.32)',
     },
 
-    /* Retry (erreur) */
     retry: {
         alignSelf: 'flex-start',
         paddingHorizontal: 14,

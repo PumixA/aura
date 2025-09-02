@@ -1,4 +1,3 @@
-// src/lib/token.ts
 import * as SecureStore from 'expo-secure-store';
 
 export type AuthTokens = { accessToken: string; refreshToken: string };

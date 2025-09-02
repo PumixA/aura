@@ -1,4 +1,3 @@
-// app/(auth)/login.tsx
 import React, { useState } from 'react';
 import {
     KeyboardAvoidingView,
@@ -46,7 +45,6 @@ export default function Login() {
 
     return (
         <View style={{ flex: 1 }}>
-            {/* Fond gradient + blobs (même rendu que les autres pages) */}
             <LinearGradient colors={['#1a1440', '#1b1f5c', '#0d1030']} style={StyleSheet.absoluteFill} />
             <AuroraBackground />
 
@@ -60,7 +58,6 @@ export default function Login() {
                         <Text style={styles.subtitle}>Connecte-toi pour continuer</Text>
                     </View>
 
-                    {/* Email */}
                     <View style={styles.inputWrap}>
                         <Ionicons name="mail-outline" size={18} color="rgba(255,255,255,0.8)" style={styles.leftIcon} />
                         <TextInput
@@ -76,7 +73,6 @@ export default function Login() {
                         />
                     </View>
 
-                    {/* Mot de passe */}
                     <View style={styles.inputWrap}>
                         <Ionicons name="lock-closed-outline" size={18} color="rgba(255,255,255,0.8)" style={styles.leftIcon} />
                         <TextInput
@@ -96,7 +92,6 @@ export default function Login() {
                         </Pressable>
                     </View>
 
-                    {/* Connexion */}
                     <PrimaryButton
                         label={loading ? 'Connexion…' : 'Connexion'}
                         onPress={onSubmit}
@@ -104,12 +99,10 @@ export default function Login() {
                         style={{ marginTop: 10 } as any}
                     />
 
-                    {/* Lien inscription */}
                     <Pressable onPress={() => router.push('/(auth)/register')} style={({ pressed }) => [styles.linkBtn, pressed && { opacity: 0.92 }]}>
                         <Text style={styles.linkText}>Pas de compte ? Créer un compte</Text>
                     </Pressable>
 
-                    {/* Loader centré (optionnel si tu préfères un spinner inline dans le bouton) */}
                     {false && loading && (
                         <View style={{ marginTop: 12, alignItems: 'center' }}>
                             <ActivityIndicator color="#fff" />
@@ -121,7 +114,6 @@ export default function Login() {
     );
 }
 
-/* ---- Fond aurora (blobs) identique aux autres écrans ---- */
 function AuroraBackground() {
     return (
         <View pointerEvents="none" style={StyleSheet.absoluteFill}>
@@ -147,7 +139,6 @@ function AuroraBackground() {
     );
 }
 
-/* ---- Styles ---- */
 const styles = StyleSheet.create({
     scroll: {
         flexGrow: 1,
@@ -176,7 +167,7 @@ const styles = StyleSheet.create({
         borderRadius: 14,
         borderWidth: 1,
         borderColor: 'rgba(255,255,255,0.22)',
-        backgroundColor: 'rgba(15,16,24,0.28)', // verre sombre (pas de double fond)
+        backgroundColor: 'rgba(15,16,24,0.28)',
         height: 52,
         paddingHorizontal: 12,
         marginTop: 14,

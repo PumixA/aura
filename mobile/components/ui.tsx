@@ -1,4 +1,3 @@
-// components/ui.tsx
 import React from 'react';
 import {
     View,
@@ -12,23 +11,12 @@ import {
 import { BlurView } from 'expo-blur';
 import { Colors } from '../constants/Colors';
 
-/**
- * Liquid glass sombre, sans elevation :
- * - 1 seul background : BlurView (tint "dark")
- * - + 1 voile sombre unique (overlay) pour assombrir et améliorer le contraste
- * - Bordure fine
- * - overflow: 'hidden' + borderRadius -> pas de fuites
- */
-
 type CardProps = {
     children: React.ReactNode;
     style?: ViewStyle;
     padding?: number;
-    /** "dark" (défaut) ou "light" selon le décor dessous */
     tint?: 'light' | 'default' | 'dark';
-    /** Opacité du voile sombre par-dessus le blur (0 à 1) — défaut 0.22  */
     overlayOpacity?: number;
-    /** Intensité du blur (défaut 26) */
     intensity?: number;
 };
 
@@ -42,10 +30,8 @@ export function GlassCard({
                           }: CardProps) {
     return (
         <View style={[styles.cardWrap, style]}>
-            {/* Unique background = blur */}
             <BlurView tint={tint} intensity={intensity} style={StyleSheet.absoluteFill} />
 
-            {/* Voile sombre unique (UNIQUEMENT) pour unifier et assombrir */}
             <View
                 pointerEvents="none"
                 style={[
@@ -59,10 +45,8 @@ export function GlassCard({
                 ]}
             />
 
-            {/* Bordure fine */}
             <View pointerEvents="none" style={styles.cardBorder} />
 
-            {/* Contenu */}
             <View style={{ padding }}>{children}</View>
         </View>
     );
@@ -74,7 +58,6 @@ type PrimaryButtonProps = {
     style?: ViewStyle;
     labelStyle?: TextStyle;
     disabled?: boolean;
-    /** Variante "glass" (transparent) ou "solid" (défaut) */
     variant?: 'solid' | 'glass';
 };
 
@@ -87,7 +70,6 @@ export function PrimaryButton({
                                   variant = 'solid',
                               }: PrimaryButtonProps) {
     if (variant === 'glass') {
-        // Bouton verre : même principe -> blur + unique overlay
         return (
             <Pressable
                 onPress={onPress}
@@ -104,7 +86,7 @@ export function PrimaryButton({
                     pointerEvents="none"
                     style={[
                         StyleSheet.absoluteFillObject,
-                        { backgroundColor: 'rgba(15,16,24,0.18)' }, // voile unique
+                        { backgroundColor: 'rgba(15,16,24,0.18)' },
                     ]}
                 />
                 <View pointerEvents="none" style={styles.btnGlassBorder} />
@@ -113,7 +95,6 @@ export function PrimaryButton({
         );
     }
 
-    // Bouton plein (solid) cohérent avec la charte
     return (
         <Pressable
             onPress={onPress}
@@ -130,18 +111,14 @@ export function PrimaryButton({
     );
 }
 
-/* ===================== Styles ===================== */
 
 const R = 22;
 
 const styles = StyleSheet.create({
-    /* ---- Card ---- */
     cardWrap: {
         position: 'relative',
         overflow: 'hidden',
         borderRadius: R,
-        // Bordure appliquée via cardBorder pour rester au-dessus du blur
-        // Ombre légère iOS uniquement (pas d'elevation Android)
         shadowColor: '#000',
         shadowOpacity: Platform.OS === 'ios' ? 0.12 : 0,
         shadowRadius: 16,
@@ -152,10 +129,9 @@ const styles = StyleSheet.create({
         inset: 0 as any,
         borderRadius: R,
         borderWidth: 1,
-        borderColor: Colors.glass.border, // devrait être semi-blanc dans ta palette
+        borderColor: Colors.glass.border,
     },
 
-    /* ---- Buttons ---- */
     btnSolid: {
         minHeight: 54,
         paddingHorizontal: 18,

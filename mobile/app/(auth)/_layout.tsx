@@ -1,4 +1,3 @@
-// app/(auth)/_layout.tsx
 import React from 'react';
 import { StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -10,7 +9,7 @@ import { Colors } from '../../constants/Colors';
 export default function AuthLayout() {
     return (
         <LinearGradient
-            colors={[Colors.primary.solid, '#3d2fb1']}       // violet clair → indigo foncé
+            colors={[Colors.primary.solid, '#3d2fb1']}
             style={StyleSheet.absoluteFill}
             start={{ x: 0, y: 0 }}
             end={{ x: 0, y: 1 }}

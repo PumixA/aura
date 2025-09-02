@@ -1,4 +1,3 @@
-// app/_layout.tsx
 import React, { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -18,7 +17,6 @@ export default function RootLayout() {
         <GestureHandlerRootView style={{ flex: 1 }}>
             <SafeAreaProvider>
                 <StatusBar style="light" />
-                {/* Root stack — pas de header ici; les headers sont gérés par les layouts enfants */}
                 <Stack screenOptions={{ headerShown: false }} />
             </SafeAreaProvider>
         </GestureHandlerRootView>

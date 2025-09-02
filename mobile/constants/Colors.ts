@@ -1,21 +1,15 @@
-// constants/Colors.ts
-
 export type ThemeName = 'light' | 'dark';
 
-/** Palette de base (Aura + Apple Glass) */
 export const Palette = {
-    // Aura brand
     brandViolet: '#7A5AF8',
     brandCyan:   '#4DA8F0',
     brandPink:   '#FF6EC7',
 
-    // Semantic
     green:  '#10B981',
     greenSoft: '#34D399',
     red:    '#DC2626',
     redSoft:'#F87171',
 
-    // Greys
     white:  '#FFFFFF',
     black:  '#000000',
     grey100:'#F5F7FB',
@@ -26,7 +20,6 @@ export const Palette = {
     grey900:'#0F1222',
 };
 
-/** Dégradés utilisés */
 export const Gradients = {
     primary: [Palette.brandViolet, Palette.brandCyan],
     background: [Palette.grey900, '#161A2F'],
@@ -34,7 +27,6 @@ export const Gradients = {
     offline: ['rgba(248,113,113,0.35)', 'rgba(220,38,38,0.35)'],
 };
 
-/** Règles Apple Liquid Glass */
 export const Radii = {
     sm: 10,
     md: 14,
@@ -69,7 +61,6 @@ export const Shadows = {
     },
 };
 
-/** Thème (couleurs de texte, surface glass, bordures) */
 export function getTheme(name: ThemeName) {
     if (name === 'dark') {
         return {
@@ -95,9 +86,8 @@ export function getTheme(name: ThemeName) {
     };
 }
 
-/** Compat héritage (le projet utilisait `Colors.*`) */
 export const Colors = {
-    background: Palette.grey900, // utilisé sur le layout de fond
+    background: Palette.grey900,
     text: {
         primary: 'rgba(255,255,255,0.92)',
         muted:   'rgba(255,255,255,0.62)',

@@ -1,8 +1,6 @@
-// src/api/socket.ts
 import { io, Socket } from 'socket.io-client';
 import { API_BASE } from '../lib/env';
 
-/** Retire /api/vX de API_BASE pour le WebSocket (Socket.IO est monté à la racine). */
 function computeWsOrigin(apiBase: string): string {
     try {
         let base = apiBase.replace(/\/+$/, '');
@@ -31,9 +29,6 @@ type ClientToServerEvents = {
 
 export type DeviceSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
-/**
- * Socket.IO namespace "/agent" avec auth JWT dans handshake.auth.token = "Bearer <JWT>"
- */
 export function createDeviceSocket(accessToken: string): DeviceSocket {
     const socket = io(`${ORIGIN}${NAMESPACE}`, {
         path: SOCKET_PATH,
@@ -47,8 +42,7 @@ export function createDeviceSocket(accessToken: string): DeviceSocket {
         auth: { token: `Bearer ${accessToken}` },
     }) as DeviceSocket;
 
-    // (facultatif) Logs debug
-    // @ts-ignore
+
     if (typeof __DEV__ !== 'undefined' && __DEV__) {
         socket.on('connect', () => console.log('[socket] connected', `${ORIGIN}${NAMESPACE}`));
         socket.on('connect_error', (e) => console.warn('[socket] connect_error', e?.message || e));
