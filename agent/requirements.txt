@@ -1,4 +1,12 @@
-python-socketio[client]==5.11.2
-websocket-client>=1.7.0
+# Core
 requests>=2.31.0
-PyYAML>=6.0.1
+python-socketio[client]>=5.11.2
+
+# Parsing config
+PyYAML>=6.0
+
+# Drivers LEDs (si tu compiles sur Raspberry Pi avec WS2812B)
+rpi_ws281x>=4.3.4
+
+# Outils (facultatif mais pratique)
+colorama>=0.4.6   # logs colorés
