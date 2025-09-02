@@ -6,14 +6,7 @@ import socketio
 import requests
 from typing import Any, Dict
 
-# --- Chargeur de config SANS PyYAML (fallback) -----------------------------
-# Supporte un config.yaml simple de la forme:
-# api_url: "http://192.168.1.96:3000"
-# ws_path: "/socket.io"
-# namespace: "/agent"
-# device_id: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-# api_key: "CLE_API"
-# heartbeat_sec: 20
+# --- Chargeur de config SANS dépendre de PyYAML obligatoirement -------------
 def _parse_simple_kv_yaml(path: str) -> Dict[str, Any]:
     cfg: Dict[str, Any] = {}
     def _unquote(s: str) -> str:
@@ -24,14 +17,12 @@ def _parse_simple_kv_yaml(path: str) -> Dict[str, Any]:
     with open(path, "r", encoding="utf-8") as f:
         for raw in f:
             line = raw.strip()
-            if not line or line.startswith("#"):
-                continue
-            if ":" not in line:
+            if not line or line.startswith("#") or ":" not in line:
                 continue
             k, v = line.split(":", 1)
             key = k.strip()
             val = _unquote(v.strip())
-            # casting minimal
+            # casts simples
             if val.lower() in ("true", "false"):
                 cfg[key] = (val.lower() == "true")
             else:
@@ -45,9 +36,8 @@ def _parse_simple_kv_yaml(path: str) -> Dict[str, Any]:
     return cfg
 
 def load_config() -> Dict[str, Any]:
-    # Essaie PyYAML si dispo, sinon fallback simple-kv
     try:
-        import yaml  # type: ignore
+        import yaml  # facultatif
         with open("config.yaml", "r", encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
     except Exception:
@@ -56,23 +46,23 @@ def load_config() -> Dict[str, Any]:
 cfg = load_config()
 
 # --- Config de base
-API_URL    = str(cfg["api_url"]).rstrip("/")            # ex: http://192.168.1.96:3000
-API_BASE   = f"{API_URL}/api/v1"                        # base REST
-WS_PATH    = str(cfg.get("ws_path", "/socket.io"))      # ex: /socket.io
-NS         = str(cfg.get("namespace", "/agent"))        # ex: /agent
+API_URL    = str(cfg["api_url"]).rstrip("/")                 # ex: http://192.168.1.96:3000
+API_BASE   = f"{API_URL}/api/v1"
+WS_PATH    = str(cfg.get("ws_path", "/socket.io"))
+NS         = str(cfg.get("namespace", "/agent"))
 DEVICE_ID  = str(cfg["device_id"])
 API_KEY    = str(cfg["api_key"])
-HEARTBEAT  = int(cfg.get("heartbeat_sec", 20))          # période (sec) HB + state
+HEARTBEAT  = int(cfg.get("heartbeat_sec", 20))
 
 # --- Modules utils
-from utils import leds, music, state as dev_state
+from utils import leds, music, state as dev_state  # leds.py fourni plus bas
 
 # --- Client Socket.IO
 sio = socketio.Client(
     reconnection=True,
     reconnection_attempts=0,  # infini
     logger=False,
-    engineio_logger=False
+    engineio_logger=False,
 )
 
 # ---------- Utils HTTP ----------
@@ -84,16 +74,9 @@ def _auth_headers():
     }
 
 def post_heartbeat():
-    """
-    Envoie un heartbeat HTTP:
-    POST /api/v1/devices/:deviceId/heartbeat
-    Headers: Authorization: ApiKey <...>, x-device-id: <DEVICE_ID>
-    Body facultatif (status/metrics) — ici on envoie minimal.
-    """
     url = f"{API_BASE}/devices/{DEVICE_ID}/heartbeat"
     try:
-        body = {"status": "ok"}
-        resp = requests.post(url, json=body, headers=_auth_headers(), timeout=5)
+        resp = requests.post(url, json={"status": "ok"}, headers=_auth_headers(), timeout=5)
         if resp.status_code >= 400:
             print(f"⚠️ Heartbeat HTTP non-200: {resp.status_code} {resp.text}")
         else:
@@ -103,41 +86,31 @@ def post_heartbeat():
 
 # ---------- State report ----------
 def emit_state():
-    """
-    Récupère le snapshot local et l’envoie au hub WS.
-    Format: { deviceId, leds?, music?, widgets? } (aplati)
-    """
-    snap = dev_state.snapshot()  # doit retourner un dict
+    snap = dev_state.snapshot()  # dict attendu
     if not isinstance(snap, dict):
         print("⚠️ snapshot() n’a pas retourné un dict, ignoré:", snap)
         return
-
     payload = {"deviceId": DEVICE_ID}
     if "leds" in snap:   payload["leds"] = snap["leds"]
     if "music" in snap:  payload["music"] = snap["music"]
     if "widgets" in snap and snap["widgets"] is not None:
         payload["widgets"] = snap["widgets"]
-
-    print("📤 State envoyé:", payload)
+    print("📤 state:report →", payload)
     try:
         sio.emit("state:report", payload, namespace=NS)
     except Exception as e:
         print("⚠️ Émission state:report échouée:", e)
 
 # ---------- Helpers LEDs ----------
+from typing import Optional
 def _coerce_leds_payload(raw: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Normalise un payload LEDs provenant de 3 variantes:
-      - leds:update   -> { leds: { on?, color?, brightness?, preset? } } OU { on?, color?, ... }
-      - leds:state    -> { on: bool }
-      - leds:style    -> { color?, brightness?, preset? }
-    Retourne: { on?, color?, brightness?, preset? }
+    Normalise depuis:
+      - leds:update -> { leds:{...} } ou {...}
+      - leds:state  -> { on }
+      - leds:style  -> { color?, brightness?, preset? }
     """
-    if "leds" in raw and isinstance(raw["leds"], dict):
-        p = dict(raw["leds"])
-    else:
-        p = dict(raw)
-
+    p = dict(raw.get("leds", raw))
     norm: Dict[str, Any] = {}
     if "on" in p:          norm["on"] = bool(p["on"])
     if "color" in p:       norm["color"] = str(p["color"])
@@ -147,21 +120,14 @@ def _coerce_leds_payload(raw: Dict[str, Any]) -> Dict[str, Any]:
     return norm
 
 def _apply_leds(norm: Dict[str, Any]):
-    """
-    Applique le payload LEDs normalisé sur le driver.
-    Compat:
-      - Si utils.leds.apply existe -> on lui passe {leds: {...}}
-      - Sinon méthodes granularisées set_on/set_color/set_brightness/set_preset
-    """
-    # 1) Driver legacy
+    # 1) compat fonction apply(payload)
     if hasattr(leds, "apply") and callable(getattr(leds, "apply")):
         try:
             leds.apply({"leds": norm})
             return
         except Exception as e:
             print("⚠️ utils.leds.apply a échoué, tentative granulaire:", e)
-
-    # 2) Driver moderne
+    # 2) API granulaire
     if "on" in norm and hasattr(leds, "set_on"):
         leds.set_on(bool(norm["on"]))
     if "color" in norm and hasattr(leds, "set_color"):
@@ -171,7 +137,7 @@ def _apply_leds(norm: Dict[str, Any]):
     if "preset" in norm and hasattr(leds, "set_preset"):
         leds.set_preset(str(norm["preset"]))
 
-def _ack_ok(evt_type: str, data: Dict[str, Any] | None = None):
+def _ack_ok(evt_type: str, data: Optional[Dict[str, Any]] = None):
     sio.emit("ack", {"deviceId": DEVICE_ID, "type": evt_type, "status": "ok", "data": data or {}}, namespace=NS)
 
 def _ack_err(evt_type: str, message: str):
@@ -182,11 +148,9 @@ def _ack_err(evt_type: str, message: str):
 def connect():
     print(f"✅ Connecté au hub {NS}")
     try:
-        # compat: certains serveurs l'attendent; côté serveur on gère aussi l'auto-join
         sio.emit("agent:register", {"deviceId": DEVICE_ID}, namespace=NS)
     except Exception as e:
         print("⚠️ agent:register erreur:", e)
-    # premier heartbeat + état
     post_heartbeat()
     emit_state()
 
@@ -206,7 +170,7 @@ def on_presence(payload):
         return
     print("👀 Presence:", payload)
 
-# ----- LEDs: 3 variantes supportées -----
+# ---- LEDs
 @sio.on("leds:update", namespace=NS)
 def on_leds_update(payload):
     if payload.get("deviceId") not in (None, DEVICE_ID):
@@ -225,9 +189,9 @@ def on_leds_state(payload):
     if payload.get("deviceId") not in (None, DEVICE_ID):
         return
     try:
-        norm = _coerce_leds_payload(payload)  # attend { on: bool }
+        norm = _coerce_leds_payload(payload)
         if "on" not in norm:
-            raise ValueError("Missing 'on' in payload")
+            raise ValueError("Missing 'on'")
         _apply_leds({"on": norm["on"]})
         _ack_ok("leds:state", {"on": norm["on"]})
         emit_state()
@@ -240,7 +204,7 @@ def on_leds_style(payload):
     if payload.get("deviceId") not in (None, DEVICE_ID):
         return
     try:
-        norm = _coerce_leds_payload(payload)  # color/brightness/preset
+        norm = _coerce_leds_payload(payload)
         if not any(k in norm for k in ("color", "brightness", "preset")):
             raise ValueError("Provide at least one of: color, brightness, preset")
         _apply_leds({k: v for k, v in norm.items() if k in ("color", "brightness", "preset")})
@@ -250,13 +214,13 @@ def on_leds_style(payload):
         print("⚠️ LEDs style error:", e)
         _ack_err("leds:style", str(e))
 
-# ----- Music (inchangé) -----
+# ---- Music (inchangé)
 @sio.on("music:cmd", namespace=NS)
 def on_music(payload):
     if payload.get("deviceId") not in (None, DEVICE_ID):
         return
     try:
-        music.apply(payload)  # applique la commande (play/pause/next/prev/volume)
+        music.apply(payload)
         _ack_ok("music")
     except Exception as e:
         print("⚠️ Music apply error:", e)
@@ -267,7 +231,6 @@ def on_widgets(payload):
     if payload.get("deviceId") not in (None, DEVICE_ID):
         return
     print("[Widgets] update reçu:", payload)
-    # si ton agent doit faire quelque chose localement, ajoute la logique ici
 
 # ---------- Boucle principale ----------
 _running = True
@@ -288,7 +251,6 @@ def loop():
     last_tick = 0.0
     while _running:
         now = time.time()
-        # toutes les HEARTBEAT secondes: heartbeat HTTP + state WS
         if sio.connected and (now - last_tick) >= HEARTBEAT:
             last_tick = now
             post_heartbeat()
@@ -298,13 +260,12 @@ def loop():
 def connect_forever():
     while _running:
         try:
-            # On se connecte à la même origine que l'API (API_URL), le path WS et le namespace
             sio.connect(
-                API_URL,  # ex: http://192.168.1.96:3000
+                API_URL,
                 headers={"Authorization": f"ApiKey {API_KEY}", "x-device-id": DEVICE_ID},
-                socketio_path=WS_PATH,          # ex: /socket.io
-                namespaces=[NS],                # ex: /agent
-                transports=["websocket"]        # évite le polling
+                socketio_path=WS_PATH,
+                namespaces=[NS],
+                transports=["websocket"],
             )
             loop()
         except Exception as e:

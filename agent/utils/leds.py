@@ -1,15 +1,23 @@
 # utils/leds.py
 from __future__ import annotations
-import math
+import os
 import re
 from typing import Tuple, Optional
 
-# Essaye d'utiliser le driver réel WS2812B, sinon fallback mock
+# Tente le driver matériel, sinon fallback mock
 try:
     from rpi_ws281x import Adafruit_NeoPixel, Color
     _HAVE_WS281X = True
 except Exception:
     _HAVE_WS281X = False
+
+# --- Paramètres par défaut (adaptés à ta bande WS2812B 5m@60/m -> 300) ----
+DEFAULT_LED_COUNT = int(os.environ.get("AURA_LED_COUNT", "300"))
+DEFAULT_LED_PIN   = int(os.environ.get("AURA_LED_PIN", "18"))  # GPIO18 (PWM)
+DEFAULT_FREQ_HZ   = 800_000
+DEFAULT_DMA       = 10
+DEFAULT_INVERT    = False
+DEFAULT_CHANNEL   = 0
 
 _HEX = re.compile(r'^#[0-9A-Fa-f]{6}$')
 
@@ -24,9 +32,9 @@ def _map_brightness_0_100_to_0_255(val: int) -> int:
     return int(round(v * 255 / 100))
 
 def _apply_brightness(rgb: Tuple[int, int, int], brightness_0_255: int) -> Tuple[int, int, int]:
-    # brightness global: scale + légère courbe gamma
     r, g, b = rgb
     scale = max(0, min(255, brightness_0_255)) / 255.0
+    # légère courbe gamma pour éviter les bas niveaux trop sombres
     def gcurve(c):
         return int(round((c / 255.0) ** 1.6 * 255))
     return (
@@ -41,8 +49,6 @@ class _MockStrip:
         self.count = count
         self.pixels = [(0, 0, 0)] * count
         self._brightness = 255
-        self.is_on = False
-
     def begin(self): pass
     def setBrightness(self, b: int): self._brightness = b
     def setPixelColor(self, i: int, color):
@@ -58,14 +64,22 @@ class _MockStrip:
 
 class AuraLEDs:
     """
-    Wrapper LEDs:
+    WS2812B (NeoPixel) wrapper:
       - on/off
       - color hex #RRGGBB
       - brightness 0..100
       - presets: ocean | fire | aurora
-    Par défaut: GPIO18 (PWM), 800kHz
+    Par défaut: 300 LEDs, GPIO18 (PWM), 800 kHz.
     """
-    def __init__(self, count: int = 60, pin: int = 18, freq_hz: int = 800_000, dma: int = 10, invert: bool = False, channel: int = 0):
+    def __init__(
+            self,
+            count: int = DEFAULT_LED_COUNT,
+            pin: int = DEFAULT_LED_PIN,
+            freq_hz: int = DEFAULT_FREQ_HZ,
+            dma: int = DEFAULT_DMA,
+            invert: bool = DEFAULT_INVERT,
+            channel: int = DEFAULT_CHANNEL,
+    ):
         self.count = count
         self.color_hex = "#FFFFFF"
         self.on = False
@@ -80,7 +94,7 @@ class AuraLEDs:
         else:
             self._strip = _MockStrip(count)
 
-        self.apply()  # init
+        self.apply()  # init éteint
 
     # ---- API publique ----
     def set_on(self, on: bool):
@@ -110,7 +124,6 @@ class AuraLEDs:
             self._preset_aurora()
         else:
             raise ValueError(f"Unknown preset: {name}")
-        # un preset allume les LEDs
         self.on = True
         self._strip.show()
 
@@ -134,9 +147,9 @@ class AuraLEDs:
         self._strip.show()
 
     def _fill_all(self, rgb: Tuple[int, int, int]):
-        # rpi_ws281x attend GRB
+        # rpi_ws281x packe GRB
         if _HAVE_WS281X:
-            packed = Color(rgb[1], rgb[0], rgb[2])  # GRB
+            packed = Color(rgb[1], rgb[0], rgb[2])  # (G,R,B)
             for i in range(self._strip.numPixels()):
                 self._strip.setPixelColor(i, packed)
         else:
@@ -168,20 +181,31 @@ class AuraLEDs:
         # Turquoise → magenta
         self._gradient((0, 210, 160), (160, 0, 160))
 
-# ---- Compat "legacy" ----
-# Si ton code existant appelle utils.leds.apply({...}), conserve cette fonction:
+# ---- Compat "legacy": fonction apply(payload) ------------------------------
+# Conserve la compat pour l’appel existant leds.apply({...})
+_SINGLETON: AuraLEDs | None = None
+
+def _get_singleton() -> AuraLEDs:
+    global _SINGLETON
+    if _SINGLETON is None:
+        _SINGLETON = AuraLEDs(count=DEFAULT_LED_COUNT, pin=DEFAULT_LED_PIN)
+    return _SINGLETON
+
 def apply(payload: dict):
     """
-    Compatibilité ascendante:
-      attend {"leds": {"on"?, "color"?, "brightness"?, "preset"?"}} ou à plat.
-    Utilise une instance singleton pour l'agent.
+    Attend {"leds": {"on"?, "color"?, "brightness"?, "preset"?"}} ou champs à plat.
     """
-    global _SINGLETON
-    if "_SINGLETON" not in globals():
-        _SINGLETON = AuraLEDs(count=60)
+    dev = _get_singleton()
     p = payload.get("leds", payload)
-    if "on" in p:          _SINGLETON.set_on(bool(p["on"]))
-    if "color" in p:       _SINGLETON.set_color(str(p["color"]))
-    if "brightness" in p:  _SINGLETON.set_brightness(int(p["brightness"]))
+    if "on" in p:          dev.set_on(bool(p["on"]))
+    if "color" in p:       dev.set_color(str(p["color"]))
+    if "brightness" in p:  dev.set_brightness(int(p["brightness"]))
     if "preset" in p and p["preset"]:
-        _SINGLETON.set_preset(str(p["preset"]))
+        dev.set_preset(str(p["preset"]))
+
+# Expose des méthodes directes si le code agent veut les appeler
+def set_on(v: bool):         _get_singleton().set_on(v)
+def set_color(h: str):       _get_singleton().set_color(h)
+def set_brightness(v: int):  _get_singleton().set_brightness(v)
+def set_preset(n: Optional[str]): _get_singleton().set_preset(n)
+def snapshot() -> dict:      return _get_singleton().snapshot()
