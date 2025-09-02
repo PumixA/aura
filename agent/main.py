@@ -6,7 +6,7 @@ import requests
 import socketio
 from typing import Any, Dict, Optional
 
-# ---------- Config (PyYAML optionnel) ----------
+# ---------- Config (PyYAML optionnel, fallback parser maison) ----------
 def _parse_simple_kv_yaml(path: str) -> Dict[str, Any]:
     cfg: Dict[str, Any] = {}
     def _unq(s: str) -> str:
@@ -60,7 +60,7 @@ def _auth_headers():
         "Content-Type": "application/json",
     }
 
-# Modules locaux
+# Modules locaux (LEDs = driver WS2812B, Music = à ta convenance)
 from utils import leds, music, state as dev_state
 
 # ---------- Socket.IO client ----------
@@ -104,8 +104,11 @@ def apply_snapshot(snapshot: Dict[str, Any]):
     except Exception as e:
         print("⚠️ apply_snapshot:", e)
 
-def pull_snapshot_rest():
-    """Tentative REST (optionnelle) — fonctionnera si l'API autorise ApiKey sur /devices/:id/state."""
+def pull_snapshot_rest() -> bool:
+    """
+    Tente de lire l'état DB via REST (si autorisé à l'agent).
+    GET /api/v1/devices/:id/state avec ApiKey + x-device-id
+    """
     url = f"{API_BASE}/devices/{DEVICE_ID}/state"
     try:
         r = requests.get(url, headers=_auth_headers(), timeout=5)
@@ -124,10 +127,8 @@ def pull_snapshot_rest():
     return False
 
 # ---------- LED helpers ----------
-from typing import Any
-
 def _coerce_leds_payload(raw: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalise {on?, color?, brightness?, preset?}."""
+    """Normalise {on?, color?, brightness?, preset?} à partir d'un dict quelconque."""
     p = dict(raw)
     out: Dict[str, Any] = {}
     if "on" in p:          out["on"] = bool(p["on"])
@@ -157,6 +158,36 @@ def _ack_ok(evt_type: str, data: Optional[Dict[str, Any]] = None):
 def _ack_err(evt_type: str, msg: str):
     sio.emit("nack", {"deviceId": DEVICE_ID, "type": evt_type, "reason": msg}, namespace=NS)
 
+# ---------- Boot helpers ----------
+def _apply_local_boot_state():
+    """
+    Prend le snapshot local (utils/state.py) et l'applique AUX DRIVERS,
+    pour que le hardware reflète l'état dès le start (utile tant que la DB n'est pas ouverte à l'agent).
+    """
+    try:
+        snap = dev_state.snapshot() or {}
+        leds_cfg = snap.get("leds")
+        if isinstance(leds_cfg, dict):
+            _apply_leds(_coerce_leds_payload(leds_cfg))
+            print("✅ Boot LEDs appliqué:", leds_cfg)
+        # Décommente si tu veux appliquer aussi la musique au boot
+        # music_cfg = snap.get("music")
+        # if isinstance(music_cfg, dict):
+        #     music.apply({"music": music_cfg})
+    except Exception as e:
+        print("⚠️ Boot apply error:", e)
+
+def _pull_or_request_server_state():
+    """
+    Essaie de tirer le snapshot depuis l'API (si autorisée). Sinon, demande au hub de pousser 'state:apply'.
+    """
+    ok = pull_snapshot_rest()
+    if not ok:
+        try:
+            sio.emit("state:pull", {"deviceId": DEVICE_ID}, namespace=NS)
+        except Exception as e:
+            print("ℹ️ state:pull échec:", e)
+
 # ---------- Heartbeat ----------
 def post_heartbeat():
     url = f"{API_BASE}/devices/{DEVICE_ID}/heartbeat"
@@ -176,17 +207,19 @@ def connect():
     try:
         sio.emit("agent:register", {"deviceId": DEVICE_ID}, namespace=NS)
     except Exception as e:
-        print("⚠️ agent:register:", e)
+        print("⚠️ agent:register erreur:", e)
 
-    # 1) HB + state local
-    post_heartbeat()
+    # 1) appliquer l'état local AU HARDWARE (important pour allumer dès le boot)
+    _apply_local_boot_state()
+
+    # 2) remonter l'état effectif
     emit_state()
 
-    # 2) Tente REST (si autorisé côté API), sinon WS pull
-    ok = pull_snapshot_rest()
-    if not ok:
-        # Demande au hub d’envoyer l’état (le serveur/ui doit répondre par 'state:apply')
-        sio.emit("state:pull", {"deviceId": DEVICE_ID}, namespace=NS)
+    # 3) Heartbeat
+    post_heartbeat()
+
+    # 4) tenter de se resynchroniser avec la DB (quand tu ouvriras la route REST)
+    _pull_or_request_server_state()
 
 @sio.event(namespace=NS)
 def disconnect():
@@ -271,6 +304,7 @@ def sigterm(*_):
     try: sio.disconnect()
     except: pass
     sys.exit(0)
+
 signal.signal(signal.SIGINT, sigterm)
 signal.signal(signal.SIGTERM, sigterm)
 
@@ -281,7 +315,6 @@ def loop():
         if sio.connected and (now - last) >= HEARTBEAT:
             last = now
             post_heartbeat()
-            # on peut remonter l’état périodiquement si tu veux garder l’UI en phase
             emit_state()
         time.sleep(0.2)
 
