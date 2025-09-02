@@ -1,94 +1,173 @@
-// src/components/ui.tsx
 import React from 'react';
 import {
-    Text,
     View,
-    TouchableOpacity,
-    TextInput,
+    Text,
+    Pressable,
     ViewStyle,
+    TextStyle,
     StyleSheet,
+    Platform,
 } from 'react-native';
+import { BlurView } from 'expo-blur';
+import { Colors } from '../constants/Colors';
 
-const Colors = {
-    text: '#0f1220',
-    background: '#F8F9FC',
-    card: 'rgba(255,255,255,0.88)',
-    border: 'rgba(15,18,32,0.08)',
-    primary: '#7A5AF8',
-    primaryText: '#ffffff',
+type CardProps = {
+    children: React.ReactNode;
+    style?: ViewStyle;
+    padding?: number;
+    tint?: 'light' | 'default' | 'dark';
+    overlayOpacity?: number;
+    intensity?: number;
 };
 
-export const Card: React.FC<React.PropsWithChildren<{ style?: ViewStyle }>> = ({
-                                                                                   children,
-                                                                                   style,
-                                                                               }) => <View style={[styles.card, style]}>{children}</View>;
+export function GlassCard({
+                              children,
+                              style,
+                              padding = 16,
+                              tint = 'dark',
+                              overlayOpacity = 0.22,
+                              intensity = 26,
+                          }: CardProps) {
+    return (
+        <View style={[styles.cardWrap, style]}>
+            <BlurView tint={tint} intensity={intensity} style={StyleSheet.absoluteFill} />
 
-export const PrimaryButton: React.FC<{
-    title: string;
+            <View
+                pointerEvents="none"
+                style={[
+                    StyleSheet.absoluteFillObject,
+                    {
+                        backgroundColor:
+                            tint === 'dark'
+                                ? `rgba(15,16,24,${overlayOpacity})`
+                                : `rgba(255,255,255,${Math.min(overlayOpacity, 0.18)})`,
+                    },
+                ]}
+            />
+
+            <View pointerEvents="none" style={styles.cardBorder} />
+
+            <View style={{ padding }}>{children}</View>
+        </View>
+    );
+}
+
+type PrimaryButtonProps = {
+    label: string;
     onPress?: () => void;
+    style?: ViewStyle;
+    labelStyle?: TextStyle;
     disabled?: boolean;
-}> = ({ title, onPress, disabled }) => (
-    <TouchableOpacity
-        activeOpacity={0.9}
-        onPress={onPress}
-        disabled={disabled}
-        style={[styles.button, disabled && { opacity: 0.6 }]}
-    >
-        <Text style={styles.buttonText}>{title}</Text>
-    </TouchableOpacity>
-);
+    variant?: 'solid' | 'glass';
+};
 
-export const Input: React.FC<{
-    placeholder?: string;
-    value?: string;
-    onChangeText?: (t: string) => void;
-    secureTextEntry?: boolean;
-}> = ({ placeholder, value, onChangeText, secureTextEntry }) => (
-    <View style={styles.inputWrap}>
-        <TextInput
-            placeholder={placeholder}
-            placeholderTextColor={'#9aa3b2'}
-            style={styles.input}
-            value={value}
-            onChangeText={onChangeText}
-            secureTextEntry={secureTextEntry}
-            autoCapitalize="none"
-            autoCorrect={false}
-        />
-    </View>
-);
+export function PrimaryButton({
+                                  label,
+                                  onPress,
+                                  style,
+                                  labelStyle,
+                                  disabled,
+                                  variant = 'solid',
+                              }: PrimaryButtonProps) {
+    if (variant === 'glass') {
+        return (
+            <Pressable
+                onPress={onPress}
+                disabled={disabled}
+                style={({ pressed }) => [
+                    styles.btnGlass,
+                    pressed && { transform: [{ scale: 0.995 }] },
+                    disabled && { opacity: 0.6 },
+                    style,
+                ]}
+            >
+                <BlurView tint="dark" intensity={22} style={StyleSheet.absoluteFill} />
+                <View
+                    pointerEvents="none"
+                    style={[
+                        StyleSheet.absoluteFillObject,
+                        { backgroundColor: 'rgba(15,16,24,0.18)' },
+                    ]}
+                />
+                <View pointerEvents="none" style={styles.btnGlassBorder} />
+                <Text style={[styles.btnGlassLabel, labelStyle]}>{label}</Text>
+            </Pressable>
+        );
+    }
+
+    return (
+        <Pressable
+            onPress={onPress}
+            disabled={disabled}
+            style={({ pressed }) => [
+                styles.btnSolid,
+                pressed && { transform: [{ scale: 0.995 }] },
+                disabled && { opacity: 0.6 },
+                style,
+            ]}
+        >
+            <Text style={[styles.btnSolidLabel, labelStyle]}>{label}</Text>
+        </Pressable>
+    );
+}
+
+
+const R = 22;
 
 const styles = StyleSheet.create({
-    card: {
-        backgroundColor: Colors.card,
-        borderRadius: 24,
-        padding: 16,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: Colors.border,
+    cardWrap: {
+        position: 'relative',
+        overflow: 'hidden',
+        borderRadius: R,
+        shadowColor: '#000',
+        shadowOpacity: Platform.OS === 'ios' ? 0.12 : 0,
+        shadowRadius: 16,
+        shadowOffset: { width: 0, height: 10 },
     },
-    button: {
-        height: 52,
-        paddingHorizontal: 22,
+    cardBorder: {
+        position: 'absolute',
+        inset: 0 as any,
+        borderRadius: R,
+        borderWidth: 1,
+        borderColor: Colors.glass.border,
+    },
+
+    btnSolid: {
+        minHeight: 54,
+        paddingHorizontal: 18,
+        borderRadius: 999,
         alignItems: 'center',
         justifyContent: 'center',
-        borderRadius: 999,
-        backgroundColor: Colors.primary,
+        backgroundColor: Colors.primary.solid,
+        shadowColor: '#000',
+        shadowOpacity: Platform.OS === 'ios' ? 0.10 : 0,
+        shadowRadius: 10,
+        shadowOffset: { width: 0, height: 6 },
     },
-    buttonText: {
-        color: Colors.primaryText,
-        fontWeight: '700',
+    btnSolidLabel: {
+        color: '#fff',
+        fontWeight: '800',
         fontSize: 16,
     },
-    inputWrap: {
-        backgroundColor: 'rgba(255,255,255,0.9)',
-        borderRadius: 16,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: Colors.border,
+
+    btnGlass: {
+        minHeight: 54,
+        paddingHorizontal: 18,
+        borderRadius: 999,
+        alignItems: 'center',
+        justifyContent: 'center',
+        overflow: 'hidden',
     },
-    input: {
-        height: 48,
-        paddingHorizontal: 14,
-        color: Colors.text,
+    btnGlassBorder: {
+        position: 'absolute',
+        inset: 0 as any,
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.22)',
+    },
+    btnGlassLabel: {
+        color: '#fff',
+        fontWeight: '800',
         fontSize: 16,
     },
 });

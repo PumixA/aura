@@ -1,4 +1,3 @@
-// app/pair-qr.tsx
 import React, { useState } from 'react';
 import { View, Text, TextInput, Pressable, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -7,7 +6,6 @@ import { useDevices } from '../src/store/devices';
 
 function parseLink(input: string): { deviceId?: string; token?: string } {
     try {
-        // supporte aura://pair?deviceId=...&token=... ou https://.../pair?deviceId=...&token=...
         const u = new URL(input);
         const deviceId = u.searchParams.get('deviceId') ?? undefined;
         const token = u.searchParams.get('token') ?? u.searchParams.get('pairingToken') ?? undefined;

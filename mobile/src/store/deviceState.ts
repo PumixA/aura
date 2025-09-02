@@ -1,17 +1,18 @@
-// src/store/deviceState.ts
 import { create } from 'zustand';
 import { api } from '../api/client';
+import { createDeviceSocket, DeviceSocket } from '../api/socket';
+import { useAuth } from '../store/auth';
 
 export type LedState = {
     on: boolean;
-    color: string;           // "#RRGGBB"
-    brightness: number;      // 0..100
+    color: string;
+    brightness: number;
     preset?: string | null;
 };
 
 export type MusicState = {
     status: 'play' | 'pause';
-    volume: number;          // 0..100
+    volume: number;
     track?: any | null;
 };
 
@@ -32,6 +33,7 @@ type PerDevice = {
     data?: DeviceSnapshot;
     loading: boolean;
     error?: string | null;
+
     weather?: {
         city: string;
         units: 'metric' | 'imperial';
@@ -43,40 +45,113 @@ type PerDevice = {
     } | null;
     weatherLoading?: boolean;
     weatherError?: string | null;
+
+    wsStatus?: 'disconnected' | 'connecting' | 'connected';
+    wsError?: string | null;
+    agentOnline?: boolean;
+
+    _socket?: DeviceSocket | null;
+    _onlineTimer?: ReturnType<typeof setTimeout> | null;
 };
 
 interface DeviceStateStore {
     byId: Record<string, PerDevice>;
+
     fetchSnapshot: (deviceId: string) => Promise<void>;
     renameDevice: (deviceId: string, name: string) => Promise<{ id: string; name: string }>;
     deleteDevice: (deviceId: string) => Promise<void>;
 
-    // LEDs
     ledsToggle: (deviceId: string, on: boolean) => Promise<void>;
     ledsStyle: (deviceId: string, patch: Partial<Pick<LedState, 'color' | 'brightness' | 'preset'>>) => Promise<void>;
 
-    // Music
     musicCmd: (deviceId: string, action: 'play' | 'pause' | 'next' | 'prev') => Promise<void>;
     musicSetVolume: (deviceId: string, value: number) => Promise<void>;
 
-    // Widgets
     widgetsPut: (deviceId: string, items: WidgetItem[]) => Promise<WidgetItem[]>;
 
-    // Weather
     fetchWeather: (city: string, units?: 'metric' | 'imperial', deviceIdForCache?: string) => Promise<void>;
+
+    openSocket: (deviceId: string) => void;
+    closeSocket: (deviceId: string) => void;
+}
+
+const ONLINE_TTL_MS = 15_000;
+
+function armOnlineTimer(
+    deviceId: string,
+    get: () => DeviceStateStore,
+    setPartial: (p: Partial<DeviceStateStore>) => void
+) {
+    const st = get();
+    const per = st.byId[deviceId] ?? ({ loading: false } as PerDevice);
+
+    if (per._onlineTimer) {
+        try { clearTimeout(per._onlineTimer); } catch {}
+    }
+    const t = setTimeout(() => {
+        const cur = get().byId[deviceId];
+        if (!cur) return;
+        setPartial({
+            byId: {
+                ...get().byId,
+                [deviceId]: { ...cur, agentOnline: false, _onlineTimer: null }
+            }
+        });
+    }, ONLINE_TTL_MS);
+
+    setPartial({
+        byId: {
+            ...st.byId,
+            [deviceId]: { ...per, agentOnline: true, _onlineTimer: t }
+        }
+    });
 }
 
 export const useDeviceState = create<DeviceStateStore>((set, get) => ({
     byId: {},
 
     fetchSnapshot: async (deviceId: string) => {
-        const cur = get().byId[deviceId] ?? { loading: false };
+        const cur = (get().byId[deviceId] ?? { loading: false }) as PerDevice;
         set({ byId: { ...get().byId, [deviceId]: { ...cur, loading: true, error: null } } });
         try {
             const { data } = await api.get<DeviceSnapshot>(`/devices/${deviceId}/state`);
-            set({ byId: { ...get().byId, [deviceId]: { ...get().byId[deviceId], data, loading: false, error: null } } });
-        } catch (e: any) {
-            set({ byId: { ...get().byId, [deviceId]: { ...cur, loading: false, error: 'Impossible de charger le snapshot.' } } });
+            set({
+                byId: {
+                    ...get().byId,
+                    [deviceId]: {
+                        ...get().byId[deviceId],
+                        data,
+                        loading: false,
+                        error: null,
+                        wsStatus: get().byId[deviceId]?.wsStatus ?? 'disconnected',
+                        agentOnline: get().byId[deviceId]?.agentOnline ?? false,
+                        _onlineTimer: get().byId[deviceId]?._onlineTimer ?? null,
+                    },
+                },
+            });
+
+            try {
+                const { data: live } = await api.get<{ online: boolean; lastSeenAt: string | null }>(
+                    `/devices/${deviceId}/online`
+                );
+                const current = get().byId[deviceId];
+                if (current) {
+                    set({
+                        byId: {
+                            ...get().byId,
+                            [deviceId]: { ...current, agentOnline: !!live?.online }
+                        }
+                    });
+                }
+            } catch {
+            }
+        } catch {
+            set({
+                byId: {
+                    ...get().byId,
+                    [deviceId]: { ...cur, loading: false, error: 'Impossible de charger le snapshot.' }
+                }
+            });
         }
     },
 
@@ -86,10 +161,16 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
     },
 
     deleteDevice: async (deviceId) => {
+        const st = get();
+        const per = st.byId[deviceId];
+        if (per?._socket) { try { per._socket.disconnect(); } catch {} }
+        if (per?._onlineTimer) { try { clearTimeout(per._onlineTimer); } catch {} }
         await api.delete(`/devices/${deviceId}`);
+        const copy = { ...st.byId };
+        delete copy[deviceId];
+        set({ byId: copy });
     },
 
-    // ─── LEDs: toggle on/off (optimiste + rollback)
     ledsToggle: async (deviceId, on) => {
         const state = get();
         const prev = state.byId[deviceId]?.data;
@@ -106,7 +187,6 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
         }
     },
 
-    // ─── LEDs: style (optimiste + rollback)
     ledsStyle: async (deviceId, patch) => {
         const state = get();
         const prev = state.byId[deviceId]?.data;
@@ -129,7 +209,6 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
         }
     },
 
-    // ─── Music: commandes
     musicCmd: async (deviceId, action) => {
         const state = get();
         const prev = state.byId[deviceId]?.data;
@@ -150,7 +229,6 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
         }
     },
 
-    // ─── Music: volume
     musicSetVolume: async (deviceId, value) => {
         const state = get();
         const prev = state.byId[deviceId]?.data;
@@ -167,8 +245,6 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
             throw new Error('MUSIC_VOLUME_FAILED');
         }
     },
-
-    // ─── Widgets: PUT items complets (optimiste + rollback simple)
     widgetsPut: async (deviceId, items) => {
         const state = get();
         const prev = state.byId[deviceId]?.data;
@@ -188,16 +264,143 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
         }
     },
 
-    // ─── Weather: GET /weather?city=...
     fetchWeather: async (city, units = 'metric', deviceIdForCache) => {
         const key = deviceIdForCache ?? '__global__';
-        const cur = get().byId[key] ?? { loading: false };
+        const cur = (get().byId[key] ?? { loading: false }) as PerDevice;
         set({ byId: { ...get().byId, [key]: { ...cur, weatherLoading: true, weatherError: null } } });
         try {
             const { data } = await api.get(`/weather`, { params: { city, units } });
             set({ byId: { ...get().byId, [key]: { ...get().byId[key], weather: data, weatherLoading: false } } });
-        } catch (e) {
+        } catch {
             set({ byId: { ...get().byId, [key]: { ...get().byId[key], weatherLoading: false, weatherError: 'Météo indisponible.' } } });
         }
+    },
+
+    openSocket: (deviceId) => {
+        const st = get();
+        const per = (st.byId[deviceId] ?? { loading: false }) as PerDevice;
+        if (per._socket) return; // déjà ouvert
+
+        const token = useAuth.getState().accessToken;
+        if (!token) {
+            set({ byId: { ...st.byId, [deviceId]: { ...per, wsStatus: 'disconnected', wsError: 'NO_TOKEN', agentOnline: false } } });
+            return;
+        }
+
+        const sock = createDeviceSocket(token);
+        set({
+            byId: {
+                ...st.byId,
+                [deviceId]: {
+                    ...per,
+                    _socket: sock,
+                    wsStatus: 'connecting',
+                    wsError: null,
+                    agentOnline: per.agentOnline ?? false,
+                    _onlineTimer: per._onlineTimer ?? null,
+                }
+            }
+        });
+
+        sock.on('connect', () => {
+            sock.emit('ui:join', { deviceId });
+            set({
+                byId: {
+                    ...get().byId,
+                    [deviceId]: { ...get().byId[deviceId], wsStatus: 'connected', wsError: null }
+                }
+            });
+        });
+
+        sock.on('connect_error', (err: any) => {
+            set({
+                byId: {
+                    ...get().byId,
+                    [deviceId]: {
+                        ...get().byId[deviceId],
+                        wsStatus: 'disconnected',
+                        wsError: String(err?.message || err),
+                        agentOnline: false
+                    }
+                }
+            });
+        });
+
+        sock.on('disconnect', () => {
+            const cur = get().byId[deviceId];
+            if (cur?._onlineTimer) { try { clearTimeout(cur._onlineTimer); } catch {} }
+            set({
+                byId: {
+                    ...get().byId,
+                    [deviceId]: {
+                        ...get().byId[deviceId],
+                        wsStatus: 'disconnected',
+                        agentOnline: false,
+                        _onlineTimer: null
+                    }
+                }
+            });
+        });
+
+        sock.on('state:update', (payload: any) => {
+            const raw = payload?.state ?? payload ?? {};
+            const cur = get().byId[deviceId]?.data;
+
+            const base: DeviceSnapshot = cur ?? {
+                leds: { on: false, color: '#FFFFFF', brightness: 50, preset: null },
+                music: { status: 'pause', volume: 50, track: null },
+                widgets: [],
+            };
+
+            const next: DeviceSnapshot = {
+                leds: raw.leds ? { ...base.leds, ...raw.leds } : base.leds,
+                music: raw.music ? { ...base.music, ...raw.music } : base.music,
+                widgets: raw.widgets ? raw.widgets.slice().sort((a: any, b: any) => a.orderIndex - b.orderIndex) : base.widgets,
+            };
+
+            set({
+                byId: {
+                    ...get().byId,
+                    [deviceId]: { ...get().byId[deviceId], data: next }
+                }
+            });
+
+            armOnlineTimer(deviceId, get, (p) => set(p as any));
+        });
+
+        sock.on('agent:ack', () => armOnlineTimer(deviceId, get, (p) => set(p as any)));
+        sock.on('agent:heartbeat', () => armOnlineTimer(deviceId, get, (p) => set(p as any)));
+        sock.on('presence', (msg: any) => {
+            if (!msg || msg.deviceId !== deviceId) return;
+            if (msg.online) {
+                armOnlineTimer(deviceId, get, (p) => set(p as any));
+            } else {
+                const cur = get().byId[deviceId];
+                if (cur?._onlineTimer) { try { clearTimeout(cur._onlineTimer); } catch {} }
+                set({
+                    byId: {
+                        ...get().byId,
+                        [deviceId]: { ...get().byId[deviceId], agentOnline: false, _onlineTimer: null }
+                    }
+                });
+            }
+        });
+    },
+
+    closeSocket: (deviceId) => {
+        const st = get();
+        const per = st.byId[deviceId];
+        if (per?._socket) {
+            try { per._socket.disconnect(); } catch {}
+        }
+        if (per?._onlineTimer) {
+            try { clearTimeout(per._onlineTimer); } catch {}
+        }
+        set({
+            byId: {
+                ...st.byId,
+                [deviceId]: { ...per, _socket: null, wsStatus: 'disconnected', agentOnline: false, _onlineTimer: null }
+            }
+        });
     },
 }));

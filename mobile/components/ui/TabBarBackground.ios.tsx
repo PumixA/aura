@@ -1,19 +1,7 @@
-import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
-import { BlurView } from 'expo-blur';
-import { StyleSheet } from 'react-native';
+// components/ui/TabBarBackground.ios.tsx
+// Neutralise tout fond de TabBar côté iOS.
+// Pas de blur / pas de background, la TabBar custom gère déjà le rendu.
 
-export default function BlurTabBarBackground() {
-  return (
-    <BlurView
-      // System chrome material automatically adapts to the system's theme
-      // and matches the native tab bar appearance on iOS.
-      tint="systemChromeMaterial"
-      intensity={100}
-      style={StyleSheet.absoluteFill}
-    />
-  );
-}
-
-export function useBottomTabOverflow() {
-  return useBottomTabBarHeight();
+export default function TabBarBackground() {
+    return null;
 }

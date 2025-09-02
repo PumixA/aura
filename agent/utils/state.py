@@ -1,6 +1,6 @@
 import time
 _last = {"leds": {"on": True, "color": "#00ffaa", "brightness": 70},
-         "music": {"status": "paused", "volume": 40}}
+         "music": {"status": "pause", "volume": 40}}
 
 def snapshot():
     # Retourne un état “plausible”. Tu le mettras à jour selon le vrai matos.
