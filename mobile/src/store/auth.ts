@@ -29,6 +29,7 @@ interface AuthState {
         lastName?: string;
     }) => Promise<void>;
     fetchMe: () => Promise<void>;
+    updateMe: (payload: { firstName?: string; lastName?: string }) => Promise<void>;
     logout: () => Promise<void>;
 }
 
@@ -79,6 +80,17 @@ export const useAuth = create<AuthState>((set) => ({
     fetchMe: async () => {
         const { data } = await api.get('/me');
         set({ user: data.user, prefs: data.prefs });
+    },
+
+    // ← utilise le Swagger: PUT /me { firstName?, lastName? } -> { user, prefs }
+    updateMe: async (payload) => {
+        set({ loading: true });
+        try {
+            const { data } = await api.put('/me', payload);
+            set({ user: data.user, prefs: data.prefs });
+        } finally {
+            set({ loading: false });
+        }
     },
 
     logout: async () => {

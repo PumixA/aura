@@ -1,21 +1,26 @@
-/**
- * Learn more about light and dark modes:
- * https://docs.expo.dev/guides/color-schemes/
- */
-
-import { Colors } from '@/constants/Colors';
+// hooks/useThemeColor.ts
+import { getTheme } from '@/constants/Colors';
 import { useColorScheme } from '@/hooks/useColorScheme';
 
+/**
+ * Renvoie une couleur de thème cohérente avec notre palette.
+ * - S'appuie sur getTheme('light' | 'dark')
+ * - Pour 'background', on force 'transparent' => laisse voir le gradient global des tabs
+ */
 export function useThemeColor(
-  props: { light?: string; dark?: string },
-  colorName: keyof typeof Colors.light & keyof typeof Colors.dark
+    props: { light?: string; dark?: string },
+    colorName: keyof ReturnType<typeof getTheme>
 ) {
-  const theme = useColorScheme() ?? 'light';
-  const colorFromProps = props[theme];
+    const scheme = useColorScheme() ?? 'dark';
+    const colorFromProps = props[scheme];
 
-  if (colorFromProps) {
-    return colorFromProps;
-  } else {
-    return Colors[theme][colorName];
-  }
+    if (colorFromProps) return colorFromProps;
+
+    // Palette du thème courant
+    const theme = getTheme(scheme as 'light' | 'dark');
+
+    // IMPORTANT : on laisse le fond des scènes réellement transparent
+    if (colorName === 'background') return 'transparent';
+
+    return theme[colorName];
 }
