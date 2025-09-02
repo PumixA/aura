@@ -5,8 +5,12 @@ import time
 import yaml
 import socketio
 import requests
+from typing import Any, Dict
+
 from utils import leds, music, state as dev_state
 
+
+# --------- Chargement config ---------
 def load_config():
     with open("config.yaml") as f:
         return yaml.safe_load(f)
@@ -30,6 +34,7 @@ sio = socketio.Client(
     engineio_logger=False
 )
 
+
 # ---------- Utils HTTP ----------
 def _auth_headers():
     return {
@@ -47,28 +52,27 @@ def post_heartbeat():
     """
     url = f"{API_BASE}/devices/{DEVICE_ID}/heartbeat"
     try:
-        # tu peux enrichir body avec des métriques si tu veux
         body = {"status": "ok"}
         resp = requests.post(url, json=body, headers=_auth_headers(), timeout=5)
         if resp.status_code >= 400:
             print(f"⚠️ Heartbeat HTTP non-200: {resp.status_code} {resp.text}")
         else:
-            # pas de body (204 attendu), mais on log soft pour debug
             print("💓 Heartbeat OK")
     except Exception as e:
         print("⚠️ Heartbeat HTTP échec:", e)
 
+
+# ---------- State report ----------
 def emit_state():
     """
     Récupère le snapshot local et l’envoie au hub WS.
     Format attendu: { deviceId, leds?, music?, widgets? } (aplati)
     """
-    snap = dev_state.snapshot()  # doit retourner un dict: {"leds": {...}, "music": {...}, "widgets": [...]?}
+    snap = dev_state.snapshot()  # doit retourner un dict
     if not isinstance(snap, dict):
         print("⚠️ snapshot() n’a pas retourné un dict, ignoré:", snap)
         return
 
-    # Aplatir: pas de clé "state"
     payload = {"deviceId": DEVICE_ID}
     if "leds" in snap:   payload["leds"] = snap["leds"]
     if "music" in snap:  payload["music"] = snap["music"]
@@ -81,6 +85,62 @@ def emit_state():
     except Exception as e:
         print("⚠️ Émission state:report échouée:", e)
 
+
+# ---------- Helpers LEDs ----------
+def _coerce_leds_payload(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normalise un payload LEDs provenant de 3 variantes:
+      - leds:update   -> { leds: { on?, color?, brightness?, preset? } } OU { on?, color?, ... }
+      - leds:state    -> { on: bool }
+      - leds:style    -> { color?, brightness?, preset? }
+    Retourne un dict normalisé: { on?, color?, brightness?, preset? }
+    """
+    if "leds" in raw and isinstance(raw["leds"], dict):
+        p = dict(raw["leds"])
+    else:
+        p = dict(raw)
+
+    norm = {}
+    if "on" in p:          norm["on"] = bool(p["on"])
+    if "color" in p:       norm["color"] = str(p["color"])
+    if "brightness" in p:  norm["brightness"] = int(p["brightness"])
+    if "preset" in p and p["preset"] not in (None, ""):
+        norm["preset"] = str(p["preset"])
+    return norm
+
+def _apply_leds(norm: Dict[str, Any]):
+    """
+    Applique le payload LEDs normalisé sur le driver.
+    Compatibilité:
+      - Si utils.leds.apply existe -> on lui passe {leds: {...}} pour les anciens drivers
+      - Sinon on tente des méthodes granulaire (set_on/set_color/set_brightness/set_preset)
+    """
+    # 1) Driver legacy (fonction apply(payload))
+    if hasattr(leds, "apply") and callable(getattr(leds, "apply")):
+        try:
+            leds.apply({"leds": norm})   # compat ascendante
+            return
+        except Exception as e:
+            print("⚠️ utils.leds.apply a échoué, tentative granulaire:", e)
+
+    # 2) Driver moderne (méthodes explicites)
+    if "on" in norm and hasattr(leds, "set_on"):
+        leds.set_on(bool(norm["on"]))
+    if "color" in norm and hasattr(leds, "set_color"):
+        leds.set_color(str(norm["color"]))
+    if "brightness" in norm and hasattr(leds, "set_brightness"):
+        leds.set_brightness(int(norm["brightness"]))
+    if "preset" in norm and hasattr(leds, "set_preset"):
+        leds.set_preset(str(norm["preset"]))
+
+
+def _ack_ok(evt_type: str, data: Dict[str, Any] | None = None):
+    sio.emit("ack", {"deviceId": DEVICE_ID, "type": evt_type, "status": "ok", "data": data or {}}, namespace=NS)
+
+def _ack_err(evt_type: str, message: str):
+    sio.emit("nack", {"deviceId": DEVICE_ID, "type": evt_type, "reason": message}, namespace=NS)
+
+
 # ---------- Handlers WS ----------
 @sio.event(namespace=NS)
 def connect():
@@ -90,7 +150,7 @@ def connect():
         sio.emit("agent:register", {"deviceId": DEVICE_ID}, namespace=NS)
     except Exception as e:
         print("⚠️ agent:register erreur:", e)
-    # on envoie un premier heartbeat HTTP et un state
+    # premier heartbeat + état
     post_heartbeat()
     emit_state()
 
@@ -98,36 +158,6 @@ def connect():
 def disconnect():
     print("❌ Déconnecté du hub")
 
-@sio.on("leds:update", namespace=NS)
-def on_leds(payload):
-    if payload.get("deviceId") not in (None, DEVICE_ID):
-        return
-    try:
-        leds.apply(payload)  # applique { leds: {...} } ou champs utiles dedans
-        sio.emit("ack", {"deviceId": DEVICE_ID, "type": "leds", "status": "ok"}, namespace=NS)
-    except Exception as e:
-        print("⚠️ LEDs apply error:", e)
-        sio.emit("nack", {"deviceId": DEVICE_ID, "type": "leds", "reason": str(e)}, namespace=NS)
-
-@sio.on("music:cmd", namespace=NS)
-def on_music(payload):
-    if payload.get("deviceId") not in (None, DEVICE_ID):
-        return
-    try:
-        music.apply(payload)  # applique la commande (play/pause/next/prev/volume)
-        sio.emit("ack", {"deviceId": DEVICE_ID, "type": "music", "status": "ok"}, namespace=NS)
-    except Exception as e:
-        print("⚠️ Music apply error:", e)
-        sio.emit("nack", {"deviceId": DEVICE_ID, "type": "music", "reason": str(e)}, namespace=NS)
-
-@sio.on("widgets:update", namespace=NS)
-def on_widgets(payload):
-    if payload.get("deviceId") not in (None, DEVICE_ID):
-        return
-    print("[Widgets] update reçu:", payload)
-    # si ton agent doit faire quelque chose localement, ajoute la logique ici
-
-# (optionnel) si tu veux log les acks venant du serveur/uis
 @sio.on("agent:ack", namespace=NS)
 def on_agent_ack(payload):
     if payload.get("deviceId") not in (None, DEVICE_ID):
@@ -139,6 +169,73 @@ def on_presence(payload):
     if payload.get("deviceId") not in (None, DEVICE_ID):
         return
     print("👀 Presence:", payload)
+
+
+# ----- LEDs: 3 variantes supportées -----
+@sio.on("leds:update", namespace=NS)
+def on_leds_update(payload):
+    if payload.get("deviceId") not in (None, DEVICE_ID):
+        return
+    try:
+        norm = _coerce_leds_payload(payload)
+        _apply_leds(norm)
+        _ack_ok("leds")
+        emit_state()
+    except Exception as e:
+        print("⚠️ LEDs update error:", e)
+        _ack_err("leds", str(e))
+
+@sio.on("leds:state", namespace=NS)
+def on_leds_state(payload):
+    if payload.get("deviceId") not in (None, DEVICE_ID):
+        return
+    try:
+        norm = _coerce_leds_payload(payload)  # attend { on: bool }
+        if "on" not in norm:
+            raise ValueError("Missing 'on' in payload")
+        _apply_leds({"on": norm["on"]})
+        _ack_ok("leds:state", {"on": norm["on"]})
+        emit_state()
+    except Exception as e:
+        print("⚠️ LEDs state error:", e)
+        _ack_err("leds:state", str(e))
+
+@sio.on("leds:style", namespace=NS)
+def on_leds_style(payload):
+    if payload.get("deviceId") not in (None, DEVICE_ID):
+        return
+    try:
+        norm = _coerce_leds_payload(payload)  # color/brightness/preset
+        if not any(k in norm for k in ("color", "brightness", "preset")):
+            raise ValueError("Provide at least one of: color, brightness, preset")
+        _apply_leds({k: v for k, v in norm.items() if k in ("color", "brightness", "preset")})
+        _ack_ok("leds:style", {"applied": True})
+        emit_state()
+    except Exception as e:
+        print("⚠️ LEDs style error:", e)
+        _ack_err("leds:style", str(e))
+
+
+# ----- Music (inchangé) -----
+@sio.on("music:cmd", namespace=NS)
+def on_music(payload):
+    if payload.get("deviceId") not in (None, DEVICE_ID):
+        return
+    try:
+        music.apply(payload)  # applique la commande (play/pause/next/prev/volume)
+        _ack_ok("music")
+    except Exception as e:
+        print("⚠️ Music apply error:", e)
+        _ack_err("music", str(e))
+
+
+@sio.on("widgets:update", namespace=NS)
+def on_widgets(payload):
+    if payload.get("deviceId") not in (None, DEVICE_ID):
+        return
+    print("[Widgets] update reçu:", payload)
+    # si ton agent doit faire quelque chose localement, ajoute la logique ici
+
 
 # ---------- Boucle principale ----------
 _running = True
