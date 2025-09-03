@@ -16,6 +16,9 @@ DEFAULT_DMA       = 10
 DEFAULT_INVERT    = False
 DEFAULT_CHANNEL   = 0
 
+# 👉 plafond matériel: 0..100 (%). 40 = à 100% logique, on sort 40% matériel.
+MAX_HW_BRIGHTNESS = int(os.environ.get("AURA_MAX_HW_BRIGHTNESS", "40"))
+
 _HEX = re.compile(r'^#[0-9A-Fa-f]{6}$')
 
 def _hex_to_rgb(hexstr: str) -> Tuple[int, int, int]:
@@ -25,8 +28,21 @@ def _hex_to_rgb(hexstr: str) -> Tuple[int, int, int]:
     return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
 
 def _bmap(v: int) -> int:
+    """Map 0..100 → 0..255"""
     v = max(0, min(100, int(v)))
     return int(round(v * 255 / 100))
+
+def _map_logical_to_hw(logical_pct: int) -> int:
+    """
+    Mappe une luminosité 'logique' (0..100 venant de la DB/UI)
+    vers une luminosité 'hardware' plafonnée (0..MAX_HW_BRIGHTNESS).
+    Ex: MAX=40 → 100 logique => 40 matériel.
+    """
+    logical = max(0, min(100, int(logical_pct)))
+    if MAX_HW_BRIGHTNESS >= 100:
+        return logical
+    # proportionnel: 0..100 → 0..MAX_HW_BRIGHTNESS
+    return int(round(logical * MAX_HW_BRIGHTNESS / 100))
 
 class _MockStrip:
     def __init__(self, n: int):
@@ -41,7 +57,7 @@ class _MockStrip:
 class AuraLEDs:
     """
     Driver WS2812B — ordre de couleurs en **RGB**.
-    Luminosité gérée UNIQUEMENT par setBrightness() pour éviter les dérives de teinte.
+    Luminosité logicielle (DB) 0..100 → **plafonnée** matériellement à MAX_HW_BRIGHTNESS%.
     """
     def __init__(self, count=DEFAULT_LED_COUNT, pin=DEFAULT_LED_PIN,
                  freq_hz=DEFAULT_FREQ_HZ, dma=DEFAULT_DMA,
@@ -49,12 +65,14 @@ class AuraLEDs:
         self.count = count
         self.on = False
         self.color_hex = "#FFFFFF"
+        # brightness logique 0..100 (ce qu'on remonte/stocke)
         self.brightness_0_100 = 20
 
         if _HAVE_WS281X:
             self._strip = Adafruit_NeoPixel(count, pin, DEFAULT_FREQ_HZ, DEFAULT_DMA, DEFAULT_INVERT, 255, DEFAULT_CHANNEL)
             self._strip.begin()
-            self._strip.setBrightness(_bmap(self.brightness_0_100))
+            hw_pct = _map_logical_to_hw(self.brightness_0_100)
+            self._strip.setBrightness(_bmap(hw_pct))
         else:
             self._strip = _MockStrip(count)
 
@@ -71,9 +89,12 @@ class AuraLEDs:
         self.apply()
 
     def set_brightness(self, v: int):
+        # garde la valeur logique
         self.brightness_0_100 = max(0, min(100, int(v)))
+        # applique la valeur matérielle plafonnée
         if _HAVE_WS281X:
-            self._strip.setBrightness(_bmap(self.brightness_0_100))
+            hw_pct = _map_logical_to_hw(self.brightness_0_100)
+            self._strip.setBrightness(_bmap(hw_pct))
         self.apply()
 
     def set_preset(self, name: Optional[str]):
@@ -93,6 +114,7 @@ class AuraLEDs:
 
     # --- State ---
     def snapshot(self) -> dict:
+        # on expose la luminosité "logique" (0..100), pas la valeur plafonnée
         return {"on": self.on, "color": self.color_hex, "brightness": self.brightness_0_100, "preset": None}
 
     def apply(self):
@@ -101,14 +123,13 @@ class AuraLEDs:
             self._strip.show()
             return
         r, g, b = _hex_to_rgb(self.color_hex)
-        # Mapping **RGB** (ton test direct OK en Color(255,255,255))
+        # mapping **RGB**
         self._fill_all((r, g, b))
         self._strip.show()
 
     def _fill_all(self, rgb: Tuple[int, int, int]):
         if _HAVE_WS281X:
-            # WS281x Color() prend (R,G,B) quand on lui donne l'ordre RGB
-            packed = Color(rgb[0], rgb[1], rgb[2])
+            packed = Color(rgb[0], rgb[1], rgb[2])  # RGB
             for i in range(self._strip.numPixels()):
                 self._strip.setPixelColor(i, packed)
 
