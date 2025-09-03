@@ -73,6 +73,7 @@ _last_report: Optional[Dict[str, Any]] = None
 _last_emit_ts: float = 0.0
 EMIT_THROTTLE_SEC = 0.4
 
+# ---------- State helpers ----------
 def _current_snapshot() -> Dict[str, Any]:
     snap = dev_state.snapshot()
     if not isinstance(snap, dict): return {}
@@ -81,6 +82,15 @@ def _current_snapshot() -> Dict[str, Any]:
     if "music" in snap:  out["music"] = snap["music"]
     if "widgets" in snap and snap["widgets"] is not None: out["widgets"] = snap["widgets"]
     return out
+
+def _update_state_music_from_driver():
+    """Essaie de pousser l'état musique réel (utils/music.py) dans le state local si possible."""
+    try:
+        st = music.get_state()
+        if hasattr(dev_state, "set_music"):
+            dev_state.set_music(st)
+    except Exception as e:
+        print("ℹ️ update state music fail:", e)
 
 def emit_state(force: bool = False):
     global _last_report, _last_emit_ts
@@ -98,38 +108,7 @@ def emit_state(force: bool = False):
     except Exception as e:
         print("⚠️ state:report erreur:", e)
 
-def apply_snapshot(snapshot: Dict[str, Any], *, reason: str = "unknown"):
-    print(f"⬇️  state:apply ({reason}) →", snapshot)
-    try:
-        if "leds" in snapshot and isinstance(snapshot["leds"], dict):
-            _apply_leds(_coerce_leds_payload(snapshot["leds"]))
-        if "music" in snapshot and snapshot["music"] is not None:
-            try:
-                music.apply({"music": snapshot["music"]})
-            except Exception as me:
-                print("⚠️ music.apply:", me)
-        emit_state(force=True)
-    except Exception as e:
-        print("⚠️ apply_snapshot:", e)
-
-def pull_snapshot_rest() -> bool:
-    url = f"{API_BASE}/devices/{DEVICE_ID}/state"
-    try:
-        r = requests.get(url, headers=_auth_headers(), timeout=5)
-        if r.status_code == 200:
-            data = r.json()
-            if isinstance(data, dict):
-                apply_snapshot(data, reason="REST")
-                print("✅ Snapshot REST appliqué.")
-                return True
-            else:
-                print("⚠️ Réponse snapshot non-dict:", type(data))
-        else:
-            print(f"ℹ️ Snapshot REST non autorisé/indispo ({r.status_code}).")
-    except Exception as e:
-        print("ℹ️ Snapshot REST échec:", e)
-    return False
-
+# ---------- Apply snapshot ----------
 def _coerce_leds_payload(raw: Dict[str, Any]) -> Dict[str, Any]:
     p = dict(raw)
     out: Dict[str, Any] = {}
@@ -154,6 +133,53 @@ def _apply_leds(norm: Dict[str, Any]):
     if "color" in norm and hasattr(leds, "set_color"): leds.set_color(str(norm["color"]))
     if "brightness" in norm and hasattr(leds, "set_brightness"): leds.set_brightness(int(norm["brightness"]))
     if "preset" in norm and hasattr(leds, "set_preset"): leds.set_preset(str(norm["preset"]))
+
+def _apply_music_from_snapshot(mraw: Dict[str, Any]):
+    """
+    mraw: {"status":"play|pause","volume":0..100,...}
+    On applique en 2 temps : volume puis statut.
+    """
+    try:
+        if "volume" in mraw:
+            music.set_volume(int(mraw["volume"]))
+        if "status" in mraw:
+            st = str(mraw["status"]).lower()
+            if st == "play":
+                music.play()
+            elif st == "pause":
+                music.pause()
+        _update_state_music_from_driver()
+    except Exception as e:
+        print("⚠️ apply music snapshot:", e)
+
+def apply_snapshot(snapshot: Dict[str, Any], *, reason: str = "unknown"):
+    print(f"⬇️  state:apply ({reason}) →", snapshot)
+    try:
+        if "leds" in snapshot and isinstance(snapshot["leds"], dict):
+            _apply_leds(_coerce_leds_payload(snapshot["leds"]))
+        if "music" in snapshot and isinstance(snapshot["music"], dict):
+            _apply_music_from_snapshot(snapshot["music"])
+        emit_state(force=True)
+    except Exception as e:
+        print("⚠️ apply_snapshot:", e)
+
+def pull_snapshot_rest() -> bool:
+    url = f"{API_BASE}/devices/{DEVICE_ID}/state"
+    try:
+        r = requests.get(url, headers=_auth_headers(), timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            if isinstance(data, dict):
+                apply_snapshot(data, reason="REST")
+                print("✅ Snapshot REST appliqué.")
+                return True
+            else:
+                print("⚠️ Réponse snapshot non-dict:", type(data))
+        else:
+            print(f"ℹ️ Snapshot REST non autorisé/indispo ({r.status_code}).")
+    except Exception as e:
+        print("ℹ️ Snapshot REST échec:", e)
+    return False
 
 def _ack_ok(evt_type: str, data: Optional[Dict[str, Any]] = None):
     sio.emit("ack", {"deviceId": DEVICE_ID, "type": evt_type, "status": "ok", "data": data or {}}, namespace=NS)
@@ -225,7 +251,7 @@ def on_state_apply(payload):
     if payload.get("deviceId") not in (None, DEVICE_ID): return
     apply_snapshot({k: v for k, v in payload.items() if k in ("leds", "music", "widgets")}, reason="WS")
 
-# LEDs
+# ---------- LEDs ----------
 @sio.on("leds:update", namespace=NS)
 def on_leds_update(payload):
     if payload.get("deviceId") not in (None, DEVICE_ID): return
@@ -265,17 +291,39 @@ def on_leds_style(payload):
         print("⚠️ LEDs style:", e)
         _ack_err("leds:style", str(e))
 
-# Music
+# ---------- Music ----------
 @sio.on("music:cmd", namespace=NS)
-def on_music(payload):
+def on_music_cmd(payload):
     if payload.get("deviceId") not in (None, DEVICE_ID): return
     try:
-        music.apply(payload)
+        data = payload.get("music", payload)
+        # {action: play|pause|next|prev}
+        music.apply(data)
+        _update_state_music_from_driver()
         _ack_ok("music")
         emit_state()
     except Exception as e:
         print("⚠️ Music cmd:", e)
         _ack_err("music", str(e))
+
+@sio.on("music:volume", namespace=NS)
+def on_music_volume(payload):
+    if payload.get("deviceId") not in (None, DEVICE_ID): return
+    try:
+        data = payload.get("music", payload)
+        # accepte {"value":..} ou {"volume":..}
+        if "value" in data:
+            music.apply({"volume": int(data["value"])})
+        elif "volume" in data:
+            music.apply({"volume": int(data["volume"])})
+        else:
+            raise ValueError("Missing volume/value")
+        _update_state_music_from_driver()
+        _ack_ok("music:volume")
+        emit_state()
+    except Exception as e:
+        print("⚠️ Music volume:", e)
+        _ack_err("music:volume", str(e))
 
 # ---------- Main loop ----------
 _running = True
