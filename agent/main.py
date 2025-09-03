@@ -51,6 +51,7 @@ NS        = str(cfg.get("namespace", "/agent"))
 DEVICE_ID = str(cfg["device_id"])
 API_KEY   = str(cfg["api_key"])
 HEARTBEAT = int(cfg.get("heartbeat_sec", 20))
+FALLBACK_LOCAL_ON_BOOT = bool(cfg.get("fallback_local_on_boot", False))  # ← par défaut False
 
 # ---------- Utils ----------
 def _auth_headers():
@@ -60,7 +61,7 @@ def _auth_headers():
         "Content-Type": "application/json",
     }
 
-# Modules locaux (LEDs = driver WS2812B, Music = à ta convenance)
+# Modules locaux
 from utils import leds, music, state as dev_state
 
 # ---------- Socket.IO client ----------
@@ -71,27 +72,45 @@ sio = socketio.Client(
     engineio_logger=False,
 )
 
-# ---------- State helpers ----------
-def emit_state():
-    """Remonte l’instantané local au hub."""
+# ---------- State report (anti-boucle) ----------
+_last_report: Optional[Dict[str, Any]] = None
+_last_emit_ts: float = 0.0
+EMIT_THROTTLE_SEC = 0.4
+
+def _current_snapshot() -> Dict[str, Any]:
+    """Snapshot à remonter (issu de dev_state)."""
     snap = dev_state.snapshot()
     if not isinstance(snap, dict):
-        print("⚠️ snapshot() invalide:", snap)
+        return {}
+    out = {"deviceId": DEVICE_ID}
+    if "leds" in snap:   out["leds"] = snap["leds"]
+    if "music" in snap:  out["music"] = snap["music"]
+    if "widgets" in snap and snap["widgets"] is not None: out["widgets"] = snap["widgets"]
+    return out
+
+def emit_state(force: bool = False):
+    """N’émet que si modifié depuis le dernier envoi (ou force=True), avec throttle."""
+    global _last_report, _last_emit_ts
+    now = time.time()
+    if not force and (now - _last_emit_ts) < EMIT_THROTTLE_SEC:
         return
-    payload = {"deviceId": DEVICE_ID}
-    if "leds" in snap:   payload["leds"] = snap["leds"]
-    if "music" in snap:  payload["music"] = snap["music"]
-    if "widgets" in snap and snap["widgets"] is not None:
-        payload["widgets"] = snap["widgets"]
+    payload = _current_snapshot()
+    if not payload:
+        return
+    if (not force) and (_last_report == payload):
+        return
+    _last_report = payload
+    _last_emit_ts = now
     print("📤 state:report →", payload)
     try:
         sio.emit("state:report", payload, namespace=NS)
     except Exception as e:
         print("⚠️ state:report erreur:", e)
 
-def apply_snapshot(snapshot: Dict[str, Any]):
-    """Applique un snapshot complet {leds?, music?, widgets?} puis reporte l’état."""
-    print("⬇️  state:apply reçu →", snapshot)
+# ---------- Apply snapshot ----------
+def apply_snapshot(snapshot: Dict[str, Any], *, reason: str = "unknown"):
+    """Applique {leds?, music?, widgets?} au hardware, puis émet l’état."""
+    print(f"⬇️  state:apply ({reason}) →", snapshot)
     try:
         if "leds" in snapshot and isinstance(snapshot["leds"], dict):
             _apply_leds(_coerce_leds_payload(snapshot["leds"]))
@@ -100,22 +119,20 @@ def apply_snapshot(snapshot: Dict[str, Any]):
                 music.apply({"music": snapshot["music"]})
             except Exception as me:
                 print("⚠️ music.apply:", me)
-        emit_state()
+        emit_state(force=True)  # on vient de changer le hardware → report
     except Exception as e:
         print("⚠️ apply_snapshot:", e)
 
+# ---------- Pull DB ----------
 def pull_snapshot_rest() -> bool:
-    """
-    Tente de lire l'état DB via REST (si autorisé à l'agent).
-    GET /api/v1/devices/:id/state avec ApiKey + x-device-id
-    """
+    """GET /api/v1/devices/:id/state (ApiKey + x-device-id)."""
     url = f"{API_BASE}/devices/{DEVICE_ID}/state"
     try:
         r = requests.get(url, headers=_auth_headers(), timeout=5)
         if r.status_code == 200:
             data = r.json()
             if isinstance(data, dict):
-                apply_snapshot(data)
+                apply_snapshot(data, reason="REST")
                 print("✅ Snapshot REST appliqué.")
                 return True
             else:
@@ -128,12 +145,15 @@ def pull_snapshot_rest() -> bool:
 
 # ---------- LED helpers ----------
 def _coerce_leds_payload(raw: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalise {on?, color?, brightness?, preset?} à partir d'un dict quelconque."""
+    """Normalise {on?, color?, brightness?, preset?}."""
     p = dict(raw)
     out: Dict[str, Any] = {}
     if "on" in p:          out["on"] = bool(p["on"])
-    if "color" in p:       out["color"] = str(p["color"])
-    if "brightness" in p:  out["brightness"] = int(p["brightness"])
+    if "color" in p:
+        out["color"] = str(p["color"]).strip()
+        if out["color"].startswith("#"):
+            out["color"] = "#" + out["color"][1:].upper()
+    if "brightness" in p:  out["brightness"] = max(0, min(100, int(p["brightness"])))
     if "preset" in p and p["preset"] not in (None, ""):
         out["preset"] = str(p["preset"])
     return out
@@ -158,36 +178,6 @@ def _ack_ok(evt_type: str, data: Optional[Dict[str, Any]] = None):
 def _ack_err(evt_type: str, msg: str):
     sio.emit("nack", {"deviceId": DEVICE_ID, "type": evt_type, "reason": msg}, namespace=NS)
 
-# ---------- Boot helpers ----------
-def _apply_local_boot_state():
-    """
-    Prend le snapshot local (utils/state.py) et l'applique AUX DRIVERS,
-    pour que le hardware reflète l'état dès le start (utile tant que la DB n'est pas ouverte à l'agent).
-    """
-    try:
-        snap = dev_state.snapshot() or {}
-        leds_cfg = snap.get("leds")
-        if isinstance(leds_cfg, dict):
-            _apply_leds(_coerce_leds_payload(leds_cfg))
-            print("✅ Boot LEDs appliqué:", leds_cfg)
-        # Décommente si tu veux appliquer aussi la musique au boot
-        # music_cfg = snap.get("music")
-        # if isinstance(music_cfg, dict):
-        #     music.apply({"music": music_cfg})
-    except Exception as e:
-        print("⚠️ Boot apply error:", e)
-
-def _pull_or_request_server_state():
-    """
-    Essaie de tirer le snapshot depuis l'API (si autorisée). Sinon, demande au hub de pousser 'state:apply'.
-    """
-    ok = pull_snapshot_rest()
-    if not ok:
-        try:
-            sio.emit("state:pull", {"deviceId": DEVICE_ID}, namespace=NS)
-        except Exception as e:
-            print("ℹ️ state:pull échec:", e)
-
 # ---------- Heartbeat ----------
 def post_heartbeat():
     url = f"{API_BASE}/devices/{DEVICE_ID}/heartbeat"
@@ -209,23 +199,36 @@ def connect():
     except Exception as e:
         print("⚠️ agent:register erreur:", e)
 
-    # 1) appliquer l'état local AU HARDWARE (important pour allumer dès le boot)
-    _apply_local_boot_state()
+    # 1) DB FIRST: on tente le pull REST et on applique si OK
+    pulled = pull_snapshot_rest()
 
-    # 2) remonter l'état effectif
-    emit_state()
+    # 2) Fallback local au boot (désactivé par défaut)
+    if (not pulled) and FALLBACK_LOCAL_ON_BOOT:
+        try:
+            snap = dev_state.snapshot() or {}
+            leds_cfg = snap.get("leds")
+            if isinstance(leds_cfg, dict):
+                _apply_leds(_coerce_leds_payload(leds_cfg))
+                print("✅ Boot LEDs (fallback local) appliqué:", leds_cfg)
+                emit_state(force=True)
+        except Exception as e:
+            print("⚠️ Boot fallback error:", e)
 
     # 3) Heartbeat
     post_heartbeat()
 
-    # 4) tenter de se resynchroniser avec la DB (quand tu ouvriras la route REST)
-    _pull_or_request_server_state()
+    # 4) Si REST KO, on demande un push WS (si le serveur le supporte)
+    if not pulled:
+        try:
+            sio.emit("state:pull", {"deviceId": DEVICE_ID}, namespace=NS)
+        except Exception as e:
+            print("ℹ️ state:pull échec:", e)
 
 @sio.event(namespace=NS)
 def disconnect():
     print("❌ Déconnecté du hub")
 
-# Échos/debug
+# Debug
 @sio.on("agent:ack", namespace=NS)
 def on_agent_ack(payload):
     if payload.get("deviceId") not in (None, DEVICE_ID): return
@@ -239,9 +242,8 @@ def on_presence(payload):
 # ---- State push depuis le serveur
 @sio.on("state:apply", namespace=NS)
 def on_state_apply(payload):
-    # payload: { deviceId, leds?, music?, widgets? }
     if payload.get("deviceId") not in (None, DEVICE_ID): return
-    apply_snapshot({k: v for k, v in payload.items() if k in ("leds", "music", "widgets")})
+    apply_snapshot({k: v for k, v in payload.items() if k in ("leds", "music", "widgets")}, reason="WS")
 
 # ---- LEDs
 @sio.on("leds:update", namespace=NS)
@@ -251,7 +253,7 @@ def on_leds_update(payload):
         norm = _coerce_leds_payload(payload.get("leds", payload))
         _apply_leds(norm)
         _ack_ok("leds")
-        emit_state()
+        emit_state()  # émet une fois, anti-spam interne
     except Exception as e:
         print("⚠️ LEDs update:", e)
         _ack_err("leds", str(e))
@@ -288,7 +290,7 @@ def on_leds_style(payload):
 def on_music(payload):
     if payload.get("deviceId") not in (None, DEVICE_ID): return
     try:
-        music.apply(payload)   # à implémenter côté utils/music.py
+        music.apply(payload)
         _ack_ok("music")
         emit_state()
     except Exception as e:
@@ -309,13 +311,12 @@ signal.signal(signal.SIGINT, sigterm)
 signal.signal(signal.SIGTERM, sigterm)
 
 def loop():
-    last = 0.0
+    last_hb = 0.0
     while _running:
         now = time.time()
-        if sio.connected and (now - last) >= HEARTBEAT:
-            last = now
+        if sio.connected and (now - last_hb) >= HEARTBEAT:
+            last_hb = now
             post_heartbeat()
-            emit_state()
         time.sleep(0.2)
 
 def connect_forever():
@@ -334,5 +335,5 @@ def connect_forever():
             time.sleep(5)
 
 if __name__ == "__main__":
-    print(f"Agent Aura • device={DEVICE_ID} • url={API_URL}{WS_PATH} ns={NS} • HB={HEARTBEAT}s")
+    print(f"Agent Aura • device={DEVICE_ID} • url={API_URL}{WS_PATH} ns={NS} • HB={HEARTBEAT}s • DB-first")
     connect_forever()

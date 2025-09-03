@@ -28,10 +28,6 @@ def _bmap(v: int) -> int:
     v = max(0, min(100, int(v)))
     return int(round(v * 255 / 100))
 
-def _gcurve(x: int) -> int:
-    # petite correction gamma
-    return int(round((max(0, min(255, x)) / 255.0) ** 1.6 * 255))
-
 class _MockStrip:
     def __init__(self, n: int):
         self.n = n
@@ -52,7 +48,7 @@ class AuraLEDs:
         self.brightness_0_100 = 20
 
         if _HAVE_WS281X:
-            self._strip = Adafruit_NeoPixel(count, pin, freq_hz, dma, invert, 255, channel)
+            self._strip = Adafruit_NeoPixel(count, pin, DEFAULT_FREQ_HZ, DEFAULT_DMA, DEFAULT_INVERT, 255, DEFAULT_CHANNEL)
             self._strip.begin()
             self._strip.setBrightness(_bmap(self.brightness_0_100))
         else:
@@ -65,8 +61,8 @@ class AuraLEDs:
         self.apply()
 
     def set_color(self, hexstr: str):
-        _ = _hex_to_rgb(hexstr)
-        self.color_hex = hexstr
+        r, g, b = _hex_to_rgb(hexstr)   # validation
+        self.color_hex = f"#{hexstr.lstrip('#').upper()}"
         self.apply()
 
     def set_brightness(self, v: int):
@@ -94,22 +90,16 @@ class AuraLEDs:
             self._strip.show()
             return
         r, g, b = _hex_to_rgb(self.color_hex)
-        # brightness globale + gamma
-        scale = _bmap(self.brightness_0_100)
-        rr = _gcurve(int(r * scale / 255))
-        gg = _gcurve(int(g * scale / 255))
-        bb = _gcurve(int(b * scale / 255))
-        self._fill_all((rr, gg, bb))
+        # 👉 NE PAS réappliquer la luminosité dans la couleur : on utilise setBrightness() du driver
+        self._fill_all((r, g, b))
         self._strip.show()
 
     def _fill_all(self, rgb: Tuple[int, int, int]):
         if _HAVE_WS281X:
-            packed = Color(rgb[1], rgb[0], rgb[2])  # GRB
+            # WS281x attend GRB
+            packed = Color(rgb[1], rgb[0], rgb[2])
             for i in range(self._strip.numPixels()):
                 self._strip.setPixelColor(i, packed)
-        else:
-            # mock: rien à faire (ou log)
-            pass
 
     def _preset_gradient(self, a, b):
         n = self._strip.numPixels()
@@ -121,7 +111,7 @@ class AuraLEDs:
             if _HAVE_WS281X:
                 self._strip.setPixelColor(i, Color(g, r, bl))
 
-# --- Compat "legacy": expose un singleton et apply() ---
+# --- Compat "legacy": singleton + helpers ---
 _SINGLETON: AuraLEDs | None = None
 def _dev() -> AuraLEDs:
     global _SINGLETON
