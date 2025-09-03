@@ -39,6 +39,10 @@ class _MockStrip:
     def numPixels(self): return self.n
 
 class AuraLEDs:
+    """
+    Driver WS2812B — ordre de couleurs en **RGB**.
+    Luminosité gérée UNIQUEMENT par setBrightness() pour éviter les dérives de teinte.
+    """
     def __init__(self, count=DEFAULT_LED_COUNT, pin=DEFAULT_LED_PIN,
                  freq_hz=DEFAULT_FREQ_HZ, dma=DEFAULT_DMA,
                  invert=DEFAULT_INVERT, channel=DEFAULT_CHANNEL):
@@ -56,12 +60,13 @@ class AuraLEDs:
 
         self.apply()
 
+    # --- API logique (modifie l'état interne) ---
     def set_on(self, v: bool):
         self.on = bool(v)
         self.apply()
 
     def set_color(self, hexstr: str):
-        r, g, b = _hex_to_rgb(hexstr)   # validation
+        _ = _hex_to_rgb(hexstr)  # validation
         self.color_hex = f"#{hexstr.lstrip('#').upper()}"
         self.apply()
 
@@ -81,6 +86,12 @@ class AuraLEDs:
         self.on = True
         self._strip.show()
 
+    # --- Blackout matériel (ne modifie PAS l'état interne) ---
+    def blackout(self):
+        self._fill_all((0, 0, 0))
+        self._strip.show()
+
+    # --- State ---
     def snapshot(self) -> dict:
         return {"on": self.on, "color": self.color_hex, "brightness": self.brightness_0_100, "preset": None}
 
@@ -90,14 +101,14 @@ class AuraLEDs:
             self._strip.show()
             return
         r, g, b = _hex_to_rgb(self.color_hex)
-        # 👉 NE PAS réappliquer la luminosité dans la couleur : on utilise setBrightness() du driver
+        # Mapping **RGB** (ton test direct OK en Color(255,255,255))
         self._fill_all((r, g, b))
         self._strip.show()
 
     def _fill_all(self, rgb: Tuple[int, int, int]):
         if _HAVE_WS281X:
-            # WS281x attend GRB
-            packed = Color(rgb[1], rgb[0], rgb[2])
+            # WS281x Color() prend (R,G,B) quand on lui donne l'ordre RGB
+            packed = Color(rgb[0], rgb[1], rgb[2])
             for i in range(self._strip.numPixels()):
                 self._strip.setPixelColor(i, packed)
 
@@ -109,9 +120,9 @@ class AuraLEDs:
             g = int(a[1] + (b[1] - a[1]) * t)
             bl = int(a[2] + (b[2] - a[2]) * t)
             if _HAVE_WS281X:
-                self._strip.setPixelColor(i, Color(g, r, bl))
+                self._strip.setPixelColor(i, Color(r, g, bl))  # RGB
 
-# --- Compat "legacy": singleton + helpers ---
+# --- Singleton + helpers ---
 _SINGLETON: AuraLEDs | None = None
 def _dev() -> AuraLEDs:
     global _SINGLETON
@@ -131,3 +142,4 @@ def set_color(h: str): _dev().set_color(h)
 def set_brightness(v: int): _dev().set_brightness(v)
 def set_preset(n: Optional[str]): _dev().set_preset(n)
 def snapshot() -> dict: return _dev().snapshot()
+def blackout(): _dev().blackout()
