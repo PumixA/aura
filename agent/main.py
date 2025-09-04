@@ -50,32 +50,28 @@ WS_PATH   = str(cfg.get("ws_path", "/socket.io"))
 NS        = str(cfg.get("namespace", "/agent"))
 DEVICE_ID = str(cfg["device_id"])
 API_KEY   = str(cfg["api_key"])
-HEARTBEAT = int(cfg.get("heartbeat_sec", 20))
+
+HEARTBEAT = int(cfg.get("heartbeat_sec", 10))
 FALLBACK_LOCAL_ON_BOOT = bool(cfg.get("fallback_local_on_boot", False))
-MUSIC_POLL_SEC = int(cfg.get("music_poll_sec", 2))  # poll DB music
+MUSIC_POLL_SEC = float(cfg.get("music_poll_sec", 2))   # poll DB
+SINK_WATCH_SEC = float(cfg.get("sink_watch_sec", 0.5)) # watch volume OS
 
 def _auth_headers():
-    return {
-        "Authorization": f"ApiKey {API_KEY}",
-        "x-device-id": DEVICE_ID,
-        "Content-Type": "application/json",
-    }
+    return {"Authorization": f"ApiKey {API_KEY}", "x-device-id": DEVICE_ID, "Content-Type": "application/json"}
 
 from utils import leds, music, state as dev_state
 
-sio = socketio.Client(
-    reconnection=True,
-    reconnection_attempts=0,
-    logger=False,
-    engineio_logger=False,
-)
+sio = socketio.Client(reconnection=True, reconnection_attempts=0, logger=False, engineio_logger=False)
 
 _last_report: Optional[Dict[str, Any]] = None
 _last_emit_ts: float = 0.0
-EMIT_THROTTLE_SEC = 0.25
+EMIT_THROTTLE_SEC = 0.2
 
 _last_db_music: Optional[Dict[str, Any]] = None
 _last_music_poll: float = 0.0
+
+_last_sink_check: float = 0.0
+_last_sink_volume: Optional[int] = None
 
 # ---------- API helpers ----------
 def _fetch_api_state_raw() -> Optional[str]:
@@ -99,23 +95,21 @@ def _fetch_api_state() -> Optional[Dict[str, Any]]:
         if r.status_code == 200:
             return r.json()
         else:
-            print(f"ℹ️ API GET state non-200: {r.status_code} {r.text[:200]}")
+            print(f"ℹ️ API GET state non-200: {r.status_code} {r.text[:300]}")
     except Exception as e:
         print("ℹ️ API GET state échec:", e)
     return None
 
 # ---------- State helpers ----------
 def _refresh_runtime_music_into_state() -> None:
-    """Lit le volume/status REEL via utils/music et le pousse dans state."""
     try:
-        m = music.get_state()
+        m = music.get_state()       # lit volume/status réels
         dev_state.set_music(m)
     except Exception as e:
         print("ℹ️ refresh music state fail:", e)
 
 def _current_snapshot() -> Dict[str, Any]:
-    # avant de snap, on injecte le réel côté musique
-    _refresh_runtime_music_into_state()
+    _refresh_runtime_music_into_state()   # toujours injecter le réel musique
     snap = dev_state.snapshot()
     if not isinstance(snap, dict): return {}
     out = {"deviceId": DEVICE_ID}
@@ -170,7 +164,7 @@ def _apply_leds(norm: Dict[str, Any]):
     if "preset" in norm and hasattr(leds, "set_preset"): leds.set_preset(str(norm["preset"]))
     dev_state.merge_leds(norm)
 
-# ---------- Music ----------
+# ---------- Music (DB→SYS + handlers) ----------
 def _apply_music_from_snapshot(mraw: Dict[str, Any], *, source: str):
     try:
         before = music.get_state().get("volume")
@@ -190,8 +184,7 @@ def _apply_music_from_snapshot(mraw: Dict[str, Any], *, source: str):
 def _handle_volume_payload(payload: Dict[str, Any], *, source: str):
     data = payload.get("music", payload)
     v = data.get("value", data.get("volume", None))
-    if v is None:
-        raise ValueError("Missing volume/value")
+    if v is None: raise ValueError("Missing volume/value")
     v = int(v)
     before = music.get_state().get("volume")
     st = music.set_volume(v)
@@ -294,7 +287,7 @@ def on_state_apply(payload):
     if not _accept_for_me(payload): return
     apply_snapshot({k: v for k, v in payload.items() if k in ("leds", "music", "widgets")}, reason="WS")
 
-# LEDs
+# ---------- LEDs events ----------
 @sio.on("leds:update", namespace=NS)
 def on_leds_update(payload):
     if not _accept_for_me(payload): return
@@ -334,7 +327,7 @@ def on_leds_style(payload):
         print("⚠️ LEDs style:", e)
         _ack_err("leds:style", str(e))
 
-# Music
+# ---------- Music events ----------
 @sio.on("music:volume", namespace=NS)
 def on_music_volume(payload):
     if not _accept_for_me(payload): return
@@ -417,10 +410,8 @@ def sigterm(*_):
     global _running
     print("↩️ Stop… blackout LEDs")
     _running = False
-    try:
-        leds.blackout()
-    except:
-        pass
+    try: leds.blackout()
+    except: pass
     try: sio.disconnect()
     except: pass
     sys.exit(0)
@@ -431,15 +422,12 @@ signal.signal(signal.SIGTERM, sigterm)
 def _poll_music_from_db():
     global _last_db_music
     data = _fetch_api_state()
-    if not isinstance(data, dict):
-        return
+    if not isinstance(data, dict): return
     db_music = data.get("music") or {}
-    if not isinstance(db_music, dict):
-        return
+    if not isinstance(db_music, dict): return
 
-    # log de debug : DB vs sink actuel
-    sink_before = music.get_state().get("volume")
-    print(f"🔎 POLL DB music={db_music} • sink_now={sink_before}%")
+    sink_now = music.get_state().get("volume")
+    print(f"🔎 POLL DB music={db_music} • sink_now={sink_now}%")
 
     if _last_db_music is None:
         _last_db_music = dict(db_music)
@@ -456,21 +444,43 @@ def _poll_music_from_db():
         emit_state(tag_for_api_log="poll/music")
         _last_db_music = dict(db_music)
 
+def _watch_sink_volume():
+    """Détecte les changements de volume OS (boutons tel, OS…) et réémet l'état immédiatement."""
+    global _last_sink_volume
+    st = music.get_state()
+    v = st.get("volume")
+    if v is None:
+        return
+    if _last_sink_volume is None:
+        _last_sink_volume = v
+        return
+    if v != _last_sink_volume:
+        print(f"👂 SINK change detected: { _last_sink_volume }% → { v }% (local)")
+        dev_state.set_music(st)  # pousse volume réel dans state
+        _last_sink_volume = v
+        emit_state(tag_for_api_log="sink/watch")
+
 def loop():
-    global _last_music_poll
+    global _last_music_poll, _last_sink_check
     last_hb = 0.0
     while _running:
         now = time.time()
+
         if sio.connected and (now - last_hb) >= HEARTBEAT:
             last_hb = now
             post_heartbeat()
+
         if sio.connected and (now - _last_music_poll) >= MUSIC_POLL_SEC:
             _last_music_poll = now
-            try:
-                _poll_music_from_db()
-            except Exception as e:
-                print("ℹ️ poll music fail:", e)
-        time.sleep(0.2)
+            try: _poll_music_from_db()
+            except Exception as e: print("ℹ️ poll music fail:", e)
+
+        if (now - _last_sink_check) >= SINK_WATCH_SEC:
+            _last_sink_check = now
+            try: _watch_sink_volume()
+            except Exception as e: print("ℹ️ sink watch fail:", e)
+
+        time.sleep(0.15)
 
 def connect_forever():
     while _running:
@@ -485,12 +495,10 @@ def connect_forever():
             loop()
         except Exception as e:
             print("⚠️ Connexion échouée, retry 5s:", e)
-            try:
-                leds.blackout()
-            except:
-                pass
+            try: leds.blackout()
+            except: pass
             time.sleep(5)
 
 if __name__ == "__main__":
-    print(f"Agent Aura • device={DEVICE_ID} • url={API_URL}{WS_PATH} ns={NS} • HB={HEARTBEAT}s • DB-first • RGB")
+    print(f"Agent Aura • device={DEVICE_ID} • url={API_URL}{WS_PATH} ns={NS} • HB={HEARTBEAT}s • DB<->SYS • RGB")
     connect_forever()

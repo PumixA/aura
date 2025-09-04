@@ -1,11 +1,10 @@
 # utils/state.py
 from __future__ import annotations
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
-# État local unique. Tu peux initialiser comme tu veux.
 _last: Dict[str, Any] = {
-    "leds": { "on": False, "color": "#FFFFFF", "brightness": 50, "preset": None },
+    "leds":  { "on": False, "color": "#FFFFFF", "brightness": 50, "preset": None },
     "music": { "status": "pause", "volume": 40, "track": None },
     "widgets": None,
     "ts": int(time.time()),
@@ -15,7 +14,6 @@ def _clamp(v: int, a: int, b: int) -> int:
     return max(a, min(b, int(v)))
 
 def snapshot() -> Dict[str, Any]:
-    # retourne une shallow copy suffisante ici
     return {
         "leds": dict(_last.get("leds") or {}),
         "music": dict(_last.get("music") or {}),
@@ -24,7 +22,6 @@ def snapshot() -> Dict[str, Any]:
     }
 
 def set_music(m: Dict[str, Any]) -> None:
-    """Remplace l'état music local par ce qui vient du driver/DB."""
     if "music" in m: m = m["music"]
     cur = dict(_last.get("music") or {})
     if "status" in m:
@@ -40,7 +37,6 @@ def set_music(m: Dict[str, Any]) -> None:
     _last["ts"] = int(time.time())
 
 def merge_leds(d: Dict[str, Any]) -> None:
-    """Merge led fields (on/color/brightness/preset) dans _last.leds."""
     leds = dict(_last.get("leds") or {})
     if "on" in d:         leds["on"] = bool(d["on"])
     if "color" in d:      leds["color"] = str(d["color"])
@@ -50,7 +46,6 @@ def merge_leds(d: Dict[str, Any]) -> None:
     _last["ts"] = int(time.time())
 
 def set_leds(d: Dict[str, Any]) -> None:
-    """Replace intégralement (optionnel)."""
     _last["leds"] = {
         "on": bool(d.get("on", False)),
         "color": str(d.get("color", "#FFFFFF")),
@@ -64,7 +59,6 @@ def set_widgets(items) -> None:
     _last["ts"] = int(time.time())
 
 def apply_patch(path: str, value):
-    """Compat: modifie une clé par chemin 'a.b.c'."""
     cur = _last
     keys = path.split(".")
     for k in keys[:-1]:
