@@ -431,6 +431,9 @@ def _poll_music_from_db():
 
     if _last_db_music is None:
         _last_db_music = dict(db_music)
+        # alignement immédiat au premier passage
+        _apply_music_from_snapshot(db_music, source="POLL(first)")
+        emit_state(tag_for_api_log="poll(first)")
         return
 
     wanted_vol   = db_music.get("volume")
