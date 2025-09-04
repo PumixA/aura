@@ -1,7 +1,3 @@
-Voici le **README.md** complet, mis à jour avec tout ce qu’on a implémenté côté **Mobile** (Expo), la config, le flux d’auth, le gradient/aurora, le temps-réel, et quelques tips de debug.
-
----
-
 # Aura – Miroir connecté
 
 Système modulaire pour miroir connecté, composé de :
@@ -72,11 +68,11 @@ aura/
 │
 ├─ agent/                    # Daemon Python (Pi)
 │  ├─ config.yaml            # api_url, device_id, api_key, …
-│  ├─ main.py                # client Socket.IO + heartbeat
+│  ├─ main.py                # client Socket.IO + poll REST + heartbeat
 │  └─ utils/
-│     ├─ leds.py             # stub (remplacer par driver rpi_ws281x)
-│     ├─ music.py            # stub
-│     └─ state.py            # snapshot d’état
+│     ├─ leds.py             # driver WS2812B (ou mock)
+│     ├─ music.py            # pactl/playerctl (session utilisateur)
+│     └─ state.py            # snapshot d’état local
 │
 ├─ desktop/                  # UI Electron + React + Vite
 │  ├─ electron/
@@ -91,8 +87,8 @@ aura/
 │     ├─ App.tsx
 │     └─ main.tsx
 │
-└─ mobile/                   # App Expo/React Native (ce dépôt)
-   ├─ app/…                  # routeur expo-router
+└─ mobile/                   # App Expo/React Native
+   ├─ app/…
    ├─ src/api/{client,socket}.ts
    ├─ src/store/{auth,devices,deviceState}.ts
    ├─ constants/Colors.ts
@@ -106,7 +102,7 @@ aura/
 * **Node.js** 18+ (ou 20), **npm** 9+
 * **Python** 3.10+ (Agent)
 * **Docker** + **Docker Compose** (pour DB)
-* **Git** (déploiement & versions)
+* **Git**
 * (Mobile) **Expo CLI** / Expo Go (Android/iOS)
 
 ---
@@ -143,7 +139,7 @@ docker compose up -d
 
 ```bash
 cd aura/aura-api
-cp .env.example .env  # crée-le si besoin, voir plus bas
+cp .env.example .env
 npm i
 npx prisma migrate dev
 npm run dev
@@ -162,7 +158,7 @@ DATABASE_URL=postgresql://app:app@localhost:5432/aura?schema=public
 ### 3) Créer un utilisateur + device + récupérer la clé API
 
 ```bash
-# register (une fois)
+# register
 curl -X POST http://127.0.0.1:3000/api/v1/auth/register \
   -H 'Content-Type: application/json' \
   -d '{"email":"admin@aura.local","password":"Passw0rd!","firstName":"Admin","lastName":"Aura"}'
@@ -172,7 +168,7 @@ TOKEN=$(curl -s -X POST http://127.0.0.1:3000/api/v1/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"email":"admin@aura.local","password":"Passw0rd!"}' | sed -E 's/.*"accessToken":"([^"]+)".*/\1/')
 
-# créer un device -> récupère apiKey (montrée UNE SEULE FOIS)
+# créer un device -> récupère apiKey (affichée UNE SEULE FOIS)
 RESP=$(curl -s -X POST http://127.0.0.1:3000/api/v1/devices \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"name":"Miroir Salon"}')
@@ -186,19 +182,22 @@ API_KEY=$(echo "$RESP"   | sed -E 's/.*"apiKey":"([^"]+)".*/\1/')
 ```bash
 cd aura/agent
 python3 -m venv .venv && source .venv/bin/activate
-pip install "python-socketio[client]" websocket-client requests PyYAML
+pip install -U pip
+pip install -r requirements.txt  # voir fichier ci-dessous
 
 cat > config.yaml <<EOF
-api_url: "http://127.0.0.1:3000"
+api_url: "http://192.168.1.96:3000"   # ⚠️ mettre l'IP/host du serveur API (pas 127.0.0.1 si distant)
 ws_path: "/socket.io"
 namespace: "/agent"
 device_id: "$DEVICE_ID"
 api_key: "$API_KEY"
-heartbeat_sec: 20
+heartbeat_sec: 10
+music_poll_sec: 1.0
+sink_watch_sec: 0.3
 EOF
 
-python main.py
-# ✅ attendu : "Connecté /agent"
+sudo -E AURA_DEBUG=1 .venv/bin/python main.py
+# ✅ attendu : "Connecté au hub /agent", puis logs POLL + SINK
 ```
 
 ### 5) Desktop
@@ -207,10 +206,7 @@ python main.py
 cd aura/desktop
 npm i
 npm run dev
-# Fenêtre Electron plein écran -> Login -> Choisir device -> Piloter
 ```
-
-> (Mobile) voir section dédiée plus bas.
 
 ---
 
@@ -230,8 +226,8 @@ DATABASE_URL=postgresql://app:app@localhost:5432/aura?schema=public
 
 ```bash
 cd aura/aura-api
-npx prisma migrate dev      # migrations locales
-npx prisma studio           # GUI si besoin
+npx prisma migrate dev
+npx prisma studio
 ```
 
 ### Lancer
@@ -244,8 +240,8 @@ npm run dev   # tsx watch src/server.ts
 
 * **Health & Public**
 
-    * `GET /api/v1/health` — statut API
-    * `GET /api/v1/public/config` — config publique & feature flags
+    * `GET /api/v1/health`
+    * `GET /api/v1/public/config`
 
 * **Auth & Sessions**
 
@@ -253,17 +249,15 @@ npm run dev   # tsx watch src/server.ts
     * `POST /api/v1/auth/login`
     * `POST /api/v1/auth/refresh`
     * `POST /api/v1/auth/logout`
-    * `GET /api/v1/me`
-    * `PUT /api/v1/me`
-    * `GET /api/v1/me/sessions`
-    * `DELETE /api/v1/me/sessions/:sessionId`
+    * `GET /api/v1/me` / `PUT /api/v1/me`
+    * `GET /api/v1/me/sessions` / `DELETE /api/v1/me/sessions/:id`
 
 * **Devices (user)**
 
-    * `GET /api/v1/devices` — mes devices
-    * `POST /api/v1/devices/pair` — appairer un device avec token
-    * `PUT /api/v1/devices/:deviceId` — rename
-    * `DELETE /api/v1/devices/:deviceId` — suppression
+    * `GET /api/v1/devices`
+    * `POST /api/v1/devices/pair`
+    * `PUT /api/v1/devices/:deviceId`
+    * `DELETE /api/v1/devices/:deviceId`
     * `GET /api/v1/devices/:deviceId/state` — snapshot global (leds, music, widgets)
 
 * **Pairing (agent)**
@@ -288,18 +282,14 @@ npm run dev   # tsx watch src/server.ts
     * `GET /api/v1/devices/:deviceId/widgets`
     * `PUT /api/v1/devices/:deviceId/widgets`
 
-* **Weather**
-
-    * `GET /api/v1/weather?city=...`
-
 * **Audits & Admin**
 
-    * `GET /api/v1/audits?deviceId=&type=&limit=`
+    * `GET /api/v1/audits?...`
     * `GET /api/v1/admin/devices`
     * `GET /api/v1/admin/users`
     * `POST /api/v1/admin/devices/:id/revoke`
 
-> Swagger complet : [http://127.0.0.1:3000/docs](http://127.0.0.1:3000/docs)
+> Swagger : `http://<API_HOST>:3000/docs`
 
 ---
 
@@ -308,55 +298,132 @@ npm run dev   # tsx watch src/server.ts
 * **Path** : `/socket.io`
 * **Namespace** : `/agent`
 * **Rooms** : `deviceId`
-* **Authentification** :
+* **Authentification**
 
-    * **Agent** : header `Authorization: ApiKey <clé>` + `x-device-id: <deviceId>`
+    * **Agent** : headers `Authorization: ApiKey <clé>` + `x-device-id: <deviceId>`
     * **UI (Desktop/Mobile)** : JWT via `handshake.auth.token = "Bearer <JWT>"`
 
-**Événements gérés** :
-
-* `agent:register` — agent s’identifie
-* `ui:join` — UI rejoint un deviceId
-* `agent:ack` / `agent:nack` — retours d’exécution
-* `state:report` (agent → serveur)
-* `state:update` (serveur → UIs)
-* `leds:update` (serveur → agent)
-* `music:cmd` (serveur → agent)
-* `widgets:update` (serveur → agent)
-* `presence` (serveur → UIs) — online/offline
+**Événements** :
+`agent:register`, `agent:ack/nack`, `presence`,
+`state:report` (agent→serveur),
+`state:update` (serveur→UIs),
+`leds:update`, `leds:state`, `leds:style`,
+`music:cmd`, `music:update`, `music:volume`,
+`widgets:update`, `state:apply`.
 
 ---
 
 ## Agent Matériel (Python)
 
-**But** : tourner en tâche de fond, recevoir commandes, piloter matériel, renvoyer l’état.
+### C’est quoi ?
 
-### Installation (Pi/PC)
+Un **daemon** Python qui tourne sur le **Raspberry Pi** (ou un PC), s’authentifie auprès de l’API avec l’**ApiKey du device**, et **synchronise en continu** l’état **matériel** avec l’état **BDD** :
+
+* **LEDs** : synchro immédiate via WS (`leds:*` & `state:apply`) + snapshot au boot.
+* **Musique** : **double verrou** :
+
+    * **POLL REST** périodique de la route `GET /devices/:id/state` (lit `music.status` & `music.volume` en BDD), puis applique si différent.
+    * **WATCH local** du **sink** (via `pactl`), pour remonter tout changement de volume côté OS/boutons.
+
+Chaque action est **loguée** : détection → récupération JSON → application (pactl/playerctl) → émission `state:report`.
+
+### À quoi ça sert ?
+
+* Assurer que **l’appareil reflète exactement la BDD** au démarrage **et** lors de toute modification (qu’elle vienne du mobile/desktop ou de l’OS local).
+* Éviter les désynchronisations : même si un événement WS se perd, le **poll REST** rattrape; si l’utilisateur change le volume localement, le **watch** remonte l’info.
+
+### Installation
+
+Dans `agent/requirements.txt` :
+
+```
+python-socketio==5.11.3
+websocket-client==1.8.0
+requests==2.32.3
+PyYAML==6.0.2
+# LEDs réelles (optionnel si mock) :
+rpi_ws281x==4.3.4
+```
+
+Installation :
 
 ```bash
 cd aura/agent
 python3 -m venv .venv && source .venv/bin/activate
-pip install "python-socketio[client]" websocket-client requests PyYAML
+pip install -U pip
+pip install -r requirements.txt
 ```
 
-`config.yaml` :
+### Configuration
+
+`agent/config.yaml` :
 
 ```yaml
-api_url: "http://192.168.1.xxx:3000"
+api_url: "http://192.168.1.96:3000"  # ⚠️ mettre l'IP/hostname réel de l'API (pas 127.0.0.1 si le hub est ailleurs)
 ws_path: "/socket.io"
 namespace: "/agent"
-device_id: "ID_DEVICE"
-api_key: "CLE_API"
-heartbeat_sec: 20
+device_id: "<DEVICE_ID>"
+api_key: "<API_KEY>"
+heartbeat_sec: 10
+
+# Musique
+music_poll_sec: 1.0      # fréquence du poll REST musique (plus bas = plus réactif)
+sink_watch_sec: 0.3      # fréquence du watch volume local (pactl)
+
+# Boot
+fallback_local_on_boot: false  # si vrai : applique l’état LEDs local si l’API est indisponible au boot
 ```
 
-Lancer :
+Variables d’environnement utiles :
+
+* `AURA_DEBUG=1` : logs détaillés des commandes `pactl`/`playerctl` (RUN/OUT/ERR).
+* `AURA_PULSE_SINK=<sink_name>` : force un sink spécifique (`pactl list short sinks`).
+* LEDs : `AURA_LED_COUNT`, `AURA_MAX_HW_BRIGHTNESS`, etc.
+
+### Lancement (dev)
 
 ```bash
-python main.py
+cd aura/agent
+sudo -E AURA_DEBUG=1 .venv/bin/python main.py
 ```
 
-### Service systemd (prod Pi)
+Attendu dans les logs :
+
+* `✅ Connecté au hub /agent`
+* À intervalle régulier : `🕑 POLL tick (every Xs)`, `🟦 RAW GET ... → 200`, `🔎 POLL tick → DB {...} • SINK {...}`
+* En cas d’écart : `🔁 POLL APPLY volume DB X% → SINK Y%` puis `✅ POLL done: sink now X%`
+* Si changement local : `👂 SINK change detected: ...`
+
+### Spécificités de fonctionnement
+
+**LEDs (référence côté serveur)**
+
+1. Au boot : `GET /devices/:id/state` → `_apply_leds(...)` → `state:report`.
+2. En temps réel : événements WS `leds:update/state/style` **ou** `state:apply` partiel → application immédiate + `state:report`.
+3. Brightness : valeur **logique 0..100** plafonnée matériellement par `AURA_MAX_HW_BRIGHTNESS`.
+
+**Musique (volume + status)**
+
+1. Au boot : `GET /devices/:id/state` → applique `music.status` + `music.volume`.
+2. **Poll REST** permanent (toutes `music_poll_sec` s) :
+
+    * Compare `DB.music` avec l’état réel du **sink** (`pactl get-sink-volume` via `utils/music.py`).
+    * Si différence de **volume** → `pactl set-sink-volume <db>%` → relecture réelle → `state:report`.
+    * Si différence de **status** → `playerctl play/pause` → `state:report`.
+3. **Watch local** (toutes `sink_watch_sec` s) :
+
+    * Relit le **volume réel** ; si ça bouge (boutons, mixer…) → maj état + `state:report`.
+4. Tous les chemins d’exécution sont **logués** (détection de la modif, récupération JSON, adaptation système).
+
+**Exécution utilisateur (crucial)**
+
+* `utils/music.py` exécute `pactl`/`playerctl` **dans la session utilisateur** (ex. `melvin`) :
+
+    * Si root : `runuser -u melvin -- <cmd>` + `XDG_RUNTIME_DIR=/run/user/1000`.
+    * Sinon : commande directe avec l’environnement courant.
+* `get_state()` relit **toujours** le volume réel avant de renvoyer l’état.
+
+### Service systemd (prod)
 
 `/etc/systemd/system/aura-agent.service` :
 
@@ -389,7 +456,32 @@ sudo systemctl enable --now aura-agent
 journalctl -u aura-agent -f
 ```
 
-> Pour LEDs réelles : remplacer `utils/leds.py` par un driver `rpi_ws281x`.
+### Tests & debug (agent)
+
+**Vérifier la route BDD** :
+
+```bash
+curl -v \
+  -H "Authorization: ApiKey <API_KEY>" \
+  -H "x-device-id: <DEVICE_ID>" \
+  http://<API_HOST>:3000/api/v1/devices/<DEVICE_ID>/state
+```
+
+**Watch du JSON `music`** :
+
+```bash
+watch -n 1 "curl -sS \
+  -H 'Authorization: ApiKey <API_KEY>' \
+  -H 'x-device-id: <DEVICE_ID>' \
+  http://<API_HOST>:3000/api/v1/devices/<DEVICE_ID>/state | jq .music"
+```
+
+**Checklist si ça ne bouge pas** :
+
+* `api_url` pointe bien vers l’**IP/host réel** (pas `127.0.0.1` si le hub est sur une autre machine).
+* Logs de poll : `🟦 RAW GET ... → 200`.
+* `AURA_DEBUG=1` montre `🟪 RUN: pactl ... ENV.XDG_RUNTIME_DIR=/run/user/1000`.
+* Forcer le sink avec `AURA_PULSE_SINK`.
 
 ---
 
@@ -397,19 +489,14 @@ journalctl -u aura-agent -f
 
 **Stack** : Electron (main), React + Vite (renderer), Zustand, axios, socket.io-client.
 
-### En dev
+En dev :
 
 ```bash
 cd aura/desktop
-cp .env.development.example .env.development   # VITE_API_URL=http://127.0.0.1:3000
+cp .env.development.example .env.development   # VITE_API_URL=http://<API_HOST>:3000
 npm i
 npm run dev
 ```
-
-* Login (JWT)
-* Choisir un **device**
-* Contrôles LEDs/Musique/Widgets
-* Reçoit `state:update` et `agent:ack/nack` en temps réel
 
 ---
 
@@ -417,97 +504,20 @@ npm run dev
 
 **Stack** : Expo (React Native + TS), `expo-router`, Zustand, axios, socket.io-client.
 
-### État fonctionnel actuel
+**État** :
 
-* **Auth complète** : `register`, `login`, **refresh automatique** (interceptor axios), `logout` (révocation côté API si refresh token dispo + purge locale).
-* **Tokens persistés** via **expo-secure-store**.
-* **Navigation** : layout tabs `(Home, Profile)` avec **fond gradient Aurora** cohérent (dégradés + blobs) sur toutes les pages (Home, Device, Profile, Login, Register).
-* **Home** : liste des devices (`GET /devices`), badge **online/offline**, skeletons, bouton flottant **+** (pairing à venir).
-* **Device detail** : snapshot initial (`/devices/:id/state`), **WebSocket /agent** avec auth JWT dans `handshake.auth.token`, ACK/heartbeat/presence gérés, LEDs/Music/Widgets intégrés.
-* **Profile** : affichage user, **édition prénom/nom** (PUT `/me`), **overlay bloquant** lors de la déconnexion.
-* **Styles** : **GlassCard** + **PrimaryButton** + palette violets/cyans, overlay modal lisible (fond `rgba(0,0,0,0.8)`), contenus ne passent pas sous le header.
+* Auth complète (register/login/refresh/logout), tokens persistés en **SecureStore**.
+* Pages stylées (gradient Aurora), Home (devices), Device (LEDs/Music/Widgets + WS), Profile (édition).
+* Sockets : `auth.token = "Bearer <JWT>"`, origin dérivé de `EXPO_PUBLIC_API_URL`.
 
-> Prochaines bribes (non bloquantes pour la démo) : sessions utilisateur, pairing QR, audits timeline, reorder widgets “propre”.
-
-### Arbo mobile (résumé)
-
-```
-mobile/
-├─ app/
-│  ├─ _layout.tsx                 # boot + SafeAreas + Root stack
-│  ├─ (auth)/{login,register}.tsx # écrans auth stylés Aurora
-│  ├─ (tabs)/
-│  │  ├─ _layout.tsx              # Tabs + TabBar custom + fond transparent
-│  │  ├─ index.tsx                # Home (devices)
-│  │  └─ profile.tsx              # Profil (édition, logout)
-│  └─ device/[id].tsx             # Détail device (LEDs/Music/Widgets + WS)
-├─ src/
-│  ├─ api/{client.ts,socket.ts}
-│  ├─ lib/{env.ts,token.ts,types.ts}
-│  └─ store/{auth.ts,devices.ts,deviceState.ts}
-├─ components/{ui.tsx, AuroraTabBar.tsx, ...}
-└─ constants/Colors.ts
-```
-
-### Environnement & configuration
-
-**.env.development** (ex.) :
-
-```
-EXPO_PUBLIC_API_URL=http://192.168.1.96:3000
-EXPO_PUBLIC_WEB_URL=http://192.168.1.96:3000
-EXPO_PUBLIC_ENV=development
-```
-
-**`src/lib/env.ts`** construit `API_BASE = ${API_URL}/api/v1`.
-
-**Android** (`app.json`) :
-
-```json
-{
-  "expo": {
-    "android": {
-      "edgeToEdgeEnabled": true,
-      "adaptiveIcon": {
-        "backgroundColor": "#ffffff"
-      }
-    }
-  }
-}
-```
-
-### Lancer
+Lancer :
 
 ```bash
 cd mobile
 npm i
 npx expo install expo-secure-store expo-barcode-scanner expo-haptics expo-blur expo-linear-gradient
-npm run start  # expo start -c
+npm run start
 ```
-
-* Ouvrir dans **Expo Go** (Android/iOS).
-* Assurez-vous que le **téléphone voit l’IP LAN** de l’API (éviter 127.0.0.1).
-* **Sockets** : le client calcule l’origin WS depuis `API_BASE` (retire `/api/vX`) et se connecte à `ws://<origin>/agent` avec `auth.token = "Bearer <JWT>"`.
-
-### Auth côté mobile (détails)
-
-* `src/api/client.ts` : axios + interceptors
-
-    * injecte `Authorization: Bearer <accessToken>` sur chaque requête
-    * si `401`, tente `/auth/refresh` avec `refreshToken` (SecureStore)
-    * en cas d’échec → purge tokens + rejet
-* `src/lib/token.ts` : persistance **access/refresh** en SecureStore (mémoire + disque)
-* `src/store/auth.ts` :
-
-    * `init()` charge les tokens puis tente `/me` (si OK → user en mémoire)
-    * `login()` / `register()` stockent `tokens`, puis `fetchMe()`
-    * `logout()` appelle `/auth/logout` (best effort) puis purge locale
-
-### Tips & debug
-
-* **Require cycle** `auth.ts -> client.ts -> auth.ts` : **sans impact** (nous avons supprimé la dépendance réciproque critique en exposant `useAuth().accessToken` uniquement côté socket).
-* **Android & LAN** : utiliser l’IP **du PC en Wi-Fi** (ex. `192.168.1.x`), même réseau que le téléphone.
-* **CORS / WS** : côté API, vérifier `cors` & `allowRequest`/`origins` pour Socket.IO si vous serrez la prod.
 
 ---
 
@@ -515,13 +525,12 @@ npm run start  # expo start -c
 
 ### DB + Adminer
 
-Voir `docker-compose.yml` plus haut.
+Voir docker-compose plus haut.
 
 ### Dockeriser l’API (optionnel)
 
-`aura-api/Dockerfile` :
-
 ```dockerfile
+# aura-api/Dockerfile
 FROM node:20-alpine
 WORKDIR /app
 COPY package*.json ./
@@ -538,20 +547,8 @@ Build & run :
 cd aura/aura-api
 npm run build
 docker build -t aura-api:latest .
-docker run --rm -p 3000:3000 --env-file .env --network host aura-api:latest
+docker run --rm -p 3000:3000 --env-file .env aura-api:latest
 ```
-
-> En prod, placer l’API derrière un reverse proxy (Nginx/Caddy) avec **WebSocket** autorisé (`Upgrade: websocket`), HTTPS, et CORS limité.
-
-### Desktop en prod
-
-* Builder l’UI (`npm run build:ui`) puis lancer `electron .` en mode prod
-* Mode kiosk au boot : service systemd qui lance `npm run start`
-
-### Agent en prod
-
-* Voir **systemd** ci-dessus
-* Variables réseau stables (IP statique ou mDNS)
 
 ---
 
@@ -560,45 +557,37 @@ docker run --rm -p 3000:3000 --env-file .env --network host aura-api:latest
 * Santé API :
 
   ```bash
-  curl http://127.0.0.1:3000/api/v1/health
+  curl http://<API_HOST>:3000/api/v1/health
   ```
 
-* Lister mes devices :
+* Mes devices :
 
   ```bash
   curl -H "Authorization: Bearer $TOKEN" \
-    http://127.0.0.1:3000/api/v1/devices
+    http://<API_HOST>:3000/api/v1/devices
   ```
 
-* Rotation clé API :
+* Émettre une commande LED (debug) :
 
   ```bash
-  curl -X POST http://127.0.0.1:3000/api/v1/devices/$DEVICE_ID/apikey/rotate \
-    -H "Authorization: Bearer $TOKEN"
-  ```
-
-* Émettre une commande LED (dev only) :
-
-  ```bash
-  curl -X POST http://127.0.0.1:3000/__debug/emit \
+  curl -X POST http://<API_HOST>:3000/__debug/emit \
     -H 'Content-Type: application/json' \
-    -d '{"deviceId":"'"$DEVICE_ID"'","event":"leds:update","payload":{"on":true,"color":"#00ff88","brightness":60}}'
+    -d '{"deviceId":"<DEVICE_ID>","event":"leds:update","payload":{"on":true,"color":"#00ff88","brightness":60}}'
   ```
 
 ---
 
 ## Sécurité & prod checklist
 
-* [ ] **JWT\_SECRET** fort et stocké en secret
-* [ ] **CORS** et **origins Socket.IO** limités
+* [ ] **JWT\_SECRET** fort, secrets en variables d’env sécurisées
+* [ ] **CORS** & **origins Socket.IO** limités
 * [ ] **/\_\_debug/emit** désactivé en prod
-* [ ] **Clés API devices** : jamais stockées en clair (hash/bcrypt côté DB si conservées)
-* [ ] **TLS** (HTTPS) via proxy
-* [ ] **Backups** réguliers de Postgres
+* [ ] **Clés API devices** protégées (pas de logs en clair)
+* [ ] **TLS** via reverse proxy
+* [ ] **Backups** Postgres
 * [ ] **Logs** + monitoring
-* [ ] **Prisma migrate deploy** au déploiement
-* [ ] **Firewall** strict
-* [ ] **Rate limiting** et **headers sécurité**
+* [ ] `prisma migrate deploy` au déploiement
+* [ ] Firewall/rate limiting/headers sécurité
 
 ---
 
@@ -608,10 +597,8 @@ Aura | Delorme Melvin.
 
 ---
 
-### Notes
+### Notes complémentaires
 
-* `realtime.ts` gère les WS.
-* `devices.ts` gère ApiKey par device.
-* `control.ts` sert de relais REST → WS.
-* L’agent authentifie via **`Authorization: ApiKey <clé>`** + header `x-device-id`.
-* L’UI (Mobile/Desktop) transmet le JWT via `handshake.auth.token`.
+* `utils/leds.py` : mapping **RGB** + plafond **matériel** de brightness.
+* `utils/music.py` : `pactl`/`playerctl` en **session utilisateur** (via `runuser` si root), lecture **réelle** du volume.
+* `main.py` : **poll REST musique** + **watch local** + **handlers WS** + **throttling** des `state:report`.
