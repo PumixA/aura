@@ -6,110 +6,120 @@ import shutil
 import subprocess
 from typing import Optional, Dict, Any
 
-# ---- Etat local minimal
 _state = {
     "status": "pause",   # "play" | "pause"
-    "volume": 40,        # 0..100
+    "volume": 40,        # 0..100 (reflète le volume "système" quand pactl est dispo)
     "track": None,
 }
 
-_DEBUG = os.environ.get("AURA_AUDIO_DEBUG") not in (None, "", "0", "false", "False")
-def _dprint(*a):
-    if _DEBUG:
-        print("[music]", *a)
-
-# --- Try Pulse via pulsectl (libpulse)
-try:
-    import pulsectl  # type: ignore
-    _HAVE_PULSECTL = True
-except Exception:
-    _HAVE_PULSECTL = False
-
-# --- pactl fallback
-def _which(name: str) -> Optional[str]:
-    return shutil.which(name)
+# --- helpers génériques ---
+_PCT = re.compile(r"(\d+)%")
 
 def _run(cmd: list[str]) -> tuple[int, str, str]:
-    _dprint("RUN:", " ".join(cmd))
     try:
         p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, text=True)
-        if _DEBUG:
-            if p.stdout.strip(): _dprint("STDOUT:", p.stdout.strip())
-            if p.stderr.strip(): _dprint("STDERR:", p.stderr.strip())
-            _dprint("RC:", p.returncode)
         return p.returncode, p.stdout.strip(), p.stderr.strip()
     except Exception as e:
         return 1, "", str(e)
 
-# ----------- PULSE via pulsectl -----------
-def _pulse_client() -> Optional["pulsectl.Pulse"]:
-    if not _HAVE_PULSECTL:
-        return None
-    try:
-        # nom du client arbitraire
-        return pulsectl.Pulse('aura-agent')
-    except Exception as e:
-        _dprint("pulsectl connect fail:", e)
-        return None
+def _which(binname: str) -> Optional[str]:
+    return shutil.which(binname)
 
-def _pulse_default_sink_pulsectl(client: "pulsectl.Pulse"):
-    try:
-        sink = client.get_sink_by_name(client.server_info().default_sink_name)
-        return sink
-    except Exception as e:
-        _dprint("get default sink (pulsectl) fail:", e)
-        return None
+# ===================== PulseAudio / PipeWire (pactl) =====================
 
-def _pulsectl_get_volume_pct() -> Optional[int]:
-    client = _pulse_client()
-    if not client:
-        return None
-    try:
-        sink = _pulse_default_sink_pulsectl(client)
-        if not sink:
-            return None
-        # Moyenne des canaux en %
-        vol = int(round(100 * float(sink.volume.value_flat)))
-        return max(0, min(100, vol))
-    except Exception as e:
-        _dprint("pulsectl get vol fail:", e)
-        return None
-    finally:
-        try: client.close()
-        except: pass
+def _pactl_available() -> bool:
+    return _which("pactl") is not None and bool(os.environ.get("XDG_RUNTIME_DIR"))
 
-def _pulsectl_set_volume_pct(pct: int) -> bool:
-    client = _pulse_client()
-    if not client:
+def _pactl_default_sink() -> Optional[str]:
+    rc, out, _ = _run(["pactl", "get-default-sink"])
+    if rc != 0 or not out:
+        # fallback: list sinks short et prendre la 1re ligne
+        rc2, out2, _ = _run(["pactl", "list", "sinks", "short"])
+        if rc2 == 0 and out2:
+            line = out2.splitlines()[0]
+            parts = line.split()
+            return parts[1] if len(parts) >= 2 else None
+        return None
+    return out.strip()
+
+def _pactl_set_volume(pct: int) -> bool:
+    sink = _pactl_default_sink()
+    if not sink:
         return False
-    try:
-        sink = _pulse_default_sink_pulsectl(client)
-        if not sink:
-            return False
-        pct = max(0, min(100, int(pct)))
-        # value_flat est [0..1]; clamp au-dessus de 1.0 si besoin
-        vol = min(1.0, pct / 100.0)
-        # Applique uniformément sur tous les canaux
-        new_vol = sink.volume
-        for i in range(len(new_vol.values)):
-            new_vol.values[i] = vol
-        client.volume_set(sink, new_vol)
-        return True
-    except Exception as e:
-        _dprint("pulsectl set vol fail:", e)
-        return False
-    finally:
-        try: client.close()
-        except: pass
+    pct = max(0, min(100, int(pct)))
+    rc, _, _ = _run(["pactl", "set-sink-volume", sink, f"{pct}%"])
+    return rc == 0
 
-# ----------- pactl fallback -----------
-_PULSE_SINK = os.environ.get("AURA_PULSE_SINK", "@DEFAULT_SINK@")
-_PCT = re.compile(r"(\d+)%")
-
-def _pactl_get_volume_pct() -> Optional[int]:
-    if not _which("pactl"):
+def _pactl_get_volume() -> Optional[int]:
+    sink = _pactl_default_sink()
+    if not sink:
         return None
-    rc, out, _ = _run(["pactl", "get-sink-volume", _PULSE_SINK])
+    rc, out, _ = _run(["pactl", "get-sink-volume", sink])
+    if rc != 0 or not out:
+        return None
+    # Exemple: "Volume: front-left: 26869 /  41% / -23.23 dB, ..."
+    m = _PCT.search(out)
+    if not m:
+        return None
+    return max(0, min(100, int(m.group(1))))
+
+# ============================ ALSA (amixer) ==============================
+
+# Overrides possibles par env
+_ALSA_CARD_ENV = os.environ.get("AURA_ALSA_CARD")        # ex: "1"
+_ALSA_CTL_ENV  = os.environ.get("AURA_ALSA_CONTROL")     # ex: "PCM" | "Master"
+
+_detected_card: Optional[int] = None
+_detected_ctl: Optional[str] = None
+
+def _amixer_card_candidates() -> list[int]:
+    if _ALSA_CARD_ENV and _ALSA_CARD_ENV.isdigit():
+        return [int(_ALSA_CARD_ENV)]
+    # ta carte USB est card 1 (UACDemoV1.0)
+    return [1, 0, 2, 3, 4]
+
+def _amixer_try_controls(card: int) -> Optional[str]:
+    rc, out, _ = _run(["amixer", "-c", str(card), "scontrols"])
+    if rc != 0 or not out:
+        return None
+    names = []
+    for line in out.splitlines():
+        m = re.search(r"Simple mixer control '([^']+)'", line)
+        if m:
+            names.append(m.group(1))
+    for pref in ("PCM", "Master", "Speaker", "Headphone", "Digital"):
+        if pref in names:
+            return pref
+    return names[0] if names else None
+
+def _ensure_card_ctl():
+    global _detected_card, _detected_ctl
+    if _detected_card is not None and _detected_ctl is not None:
+        return
+    if _ALSA_CARD_ENV and _ALSA_CTL_ENV:
+        _detected_card = int(_ALSA_CARD_ENV)
+        _detected_ctl = _ALSA_CTL_ENV
+        return
+    for c in _amixer_card_candidates():
+        ctl = _ALSA_CTL_ENV or _amixer_try_controls(c)
+        if ctl:
+            _detected_card, _detected_ctl = c, ctl
+            return
+    _detected_card, _detected_ctl = 0, "Master"
+
+def _alsa_set_volume(pct: int) -> bool:
+    if not _which("amixer"):
+        return False
+    _ensure_card_ctl()
+    pct = max(0, min(100, int(pct)))
+    rc, _, _ = _run(["amixer", "-c", str(_detected_card), "sset", _detected_ctl, f"{pct}%", "-M"])
+    return rc == 0
+
+def _alsa_get_volume() -> Optional[int]:
+    if not _which("amixer"):
+        return None
+    _ensure_card_ctl()
+    rc, out, _ = _run(["amixer", "-c", str(_detected_card), "sget", _detected_ctl])
     if rc != 0 or not out:
         return None
     m = _PCT.search(out)
@@ -117,74 +127,34 @@ def _pactl_get_volume_pct() -> Optional[int]:
         return None
     return max(0, min(100, int(m.group(1))))
 
-def _pactl_set_volume_pct(pct: int) -> bool:
-    if not _which("pactl"):
-        return False
-    pct = max(0, min(100, int(pct)))
-    rc, _, _ = _run(["pactl", "set-sink-volume", _PULSE_SINK, f"{pct}%"])
-    return rc == 0
+# ============================ Player controls ============================
 
-# ----------- ALSA (secours ultime) -----------
-_ALSA_CARD = int(os.environ.get("AURA_ALSA_CARD", "1"))
-_ALSA_CTL  = os.environ.get("AURA_ALSA_CONTROL", "PCM")
-
-def _alsa_get_volume_pct() -> Optional[int]:
-    if not _which("amixer"):
-        return None
-    rc, out, _ = _run(["amixer", "-c", str(_ALSA_CARD), "sget", _ALSA_CTL])
-    if rc != 0 or not out:
-        return None
-    m = _PCT.search(out)
-    if not m:
-        return None
-    return max(0, min(100, int(m.group(1))))
-
-def _alsa_set_volume_pct(pct: int) -> bool:
-    if not _which("amixer"):
-        return False
-    pct = max(0, min(100, int(pct)))
-    rc, _, _ = _run(["amixer", "-c", str(_ALSA_CARD), "sset", _ALSA_CTL, f"{pct}%", "-M"])
-    return rc == 0
-
-# ----------- Playerctl (MPRIS) -----------
-def _playerctl(args: list[str]) -> bool:
+def _playerctl(cmd: list[str]) -> bool:
     pc = _which("playerctl")
     if not pc:
-        _dprint("playerctl non trouvé")
         return False
-    rc, _, _ = _run([pc] + args)
+    rc, _, _ = _run([pc] + cmd)
     return rc == 0
 
-# ----------- API publique -----------
+# ============================== API publique =============================
+
 def get_state() -> Dict[str, Any]:
-    v = _pulsectl_get_volume_pct()
+    # Priorité lecture via Pulse
+    v = _pactl_get_volume() if _pactl_available() else None
     if v is None:
-        v = _pactl_get_volume_pct()
-    if v is None:
-        v = _alsa_get_volume_pct()
+        v = _alsa_get_volume()
     if v is not None:
         _state["volume"] = v
     return dict(_state)
 
 def set_volume(value: int) -> Dict[str, Any]:
     value = max(0, min(100, int(value)))
-
-    ok = _pulsectl_set_volume_pct(value)
+    ok = False
+    if _pactl_available():
+        ok = _pactl_set_volume(value)
     if not ok:
-        _dprint("pulsectl set failed → pactl…")
-        ok = _pactl_set_volume_pct(value)
-    if not ok:
-        _dprint("pactl set failed → alsa…")
-        _alsa_set_volume_pct(value)
-
-    # relire vraiment
-    v = _pulsectl_get_volume_pct()
-    if v is None:
-        v = _pactl_get_volume_pct()
-    if v is None:
-        v = _alsa_get_volume_pct()
-    if v is not None:
-        _state["volume"] = v
+        ok = _alsa_set_volume(value)
+    # Relis systématiquement l’état réel après réglage
     return get_state()
 
 def play() -> Dict[str, Any]:
@@ -210,12 +180,11 @@ def prev_track() -> Dict[str, Any]:
 def apply(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
     Accepte:
-      - {"volume": 0..100}
       - {"action":"play"|"pause"|"next"|"prev"}
+      - {"volume": 0..100}
     """
     if "volume" in payload:
         return set_volume(int(payload["volume"]))
-
     action = payload.get("action")
     if action == "play":  return play()
     if action == "pause": return pause()
