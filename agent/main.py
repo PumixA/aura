@@ -68,7 +68,7 @@ _last_emit_ts: float = 0.0
 EMIT_THROTTLE_SEC = 0.2
 
 _last_sink_check: float = 0.0
-_last_music_poll: float = 0.0
+_last_music_poll: float = -1e9  # poll immédiat au boot
 _last_sink_volume: Optional[int] = None
 
 # ---------- API helpers ----------
@@ -254,6 +254,13 @@ def connect():
         except Exception as e:
             print("⚠️ Boot fallback error:", e)
 
+    # Poll immédiat juste après connexion pour forcer l'alignement musique
+    try:
+        print("⏳ First music DB poll right after connect() …")
+        _poll_music_from_db()
+    except Exception as e:
+        print("ℹ️ initial poll music fail:", e)
+
     post_heartbeat()
 
     if not pulled:
@@ -303,8 +310,7 @@ def on_leds_state(payload):
     if not _accept_for_me(payload): return
     try:
         norm = _coerce_leds_payload(payload)
-        if "on" not in norm: raise ValueError("Missing 'on'"
-                                              )
+        if "on" not in norm: raise ValueError("Missing 'on'")
         _apply_leds({"on": norm["on"]})
         _ack_ok("leds:state", {"on": norm["on"]})
         emit_state(tag_for_api_log="leds:state")
@@ -495,6 +501,7 @@ def loop():
         if (now - _last_music_poll) >= MUSIC_POLL_SEC:
             _last_music_poll = now
             try:
+                print(f"🕑 POLL tick (every {MUSIC_POLL_SEC}s)")
                 _poll_music_from_db()
             except Exception as e:
                 print("ℹ️ poll music fail:", e)
