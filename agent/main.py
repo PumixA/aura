@@ -71,26 +71,29 @@ sio = socketio.Client(
 
 _last_report: Optional[Dict[str, Any]] = None
 _last_emit_ts: float = 0.0
-EMIT_THROTTLE_SEC = 0.4
+EMIT_THROTTLE_SEC = 0.25  # un peu plus réactif
 
 # ---------- State helpers ----------
+def _refresh_runtime_subsystems_into_state() -> None:
+    """Relit les sous-systèmes runtime (audio) et pousse dans le state local."""
+    try:
+        m = music.get_state()  # lit volume réel @DEFAULT_SINK@
+        dev_state.set_music(m)
+    except Exception as e:
+        print("ℹ️ refresh music state fail:", e)
+
 def _current_snapshot() -> Dict[str, Any]:
+    # Toujours pousser l’état runtime avant de lire le snapshot global
+    _refresh_runtime_subsystems_into_state()
     snap = dev_state.snapshot()
-    if not isinstance(snap, dict): return {}
+    if not isinstance(snap, dict):
+        return {}
     out = {"deviceId": DEVICE_ID}
     if "leds" in snap:   out["leds"] = snap["leds"]
     if "music" in snap:  out["music"] = snap["music"]
-    if "widgets" in snap and snap["widgets"] is not None: out["widgets"] = snap["widgets"]
+    if "widgets" in snap and snap["widgets"] is not None:
+        out["widgets"] = snap["widgets"]
     return out
-
-def _update_state_music_from_driver():
-    """Essaie de pousser l'état musique réel (utils/music.py) dans le state local si possible."""
-    try:
-        st = music.get_state()
-        if hasattr(dev_state, "set_music"):
-            dev_state.set_music(st)
-    except Exception as e:
-        print("ℹ️ update state music fail:", e)
 
 def emit_state(force: bool = False):
     global _last_report, _last_emit_ts
@@ -98,8 +101,10 @@ def emit_state(force: bool = False):
     if not force and (now - _last_emit_ts) < EMIT_THROTTLE_SEC:
         return
     payload = _current_snapshot()
-    if not payload: return
-    if (not force) and (_last_report == payload): return
+    if not payload:
+        return
+    if (not force) and (_last_report == payload):
+        return
     _last_report = payload
     _last_emit_ts = now
     print("📤 state:report →", payload)
@@ -126,18 +131,24 @@ def _apply_leds(norm: Dict[str, Any]):
     if hasattr(leds, "apply") and callable(getattr(leds, "apply")):
         try:
             leds.apply({"leds": norm})
+            dev_state.merge_leds(norm)
             return
         except Exception as e:
             print("⚠️ utils.leds.apply a échoué, fallback granular:", e)
-    if "on" in norm and hasattr(leds, "set_on"): leds.set_on(bool(norm["on"]))
-    if "color" in norm and hasattr(leds, "set_color"): leds.set_color(str(norm["color"]))
-    if "brightness" in norm and hasattr(leds, "set_brightness"): leds.set_brightness(int(norm["brightness"]))
-    if "preset" in norm and hasattr(leds, "set_preset"): leds.set_preset(str(norm["preset"]))
+    if "on" in norm and hasattr(leds, "set_on"):
+        leds.set_on(bool(norm["on"]))
+    if "color" in norm and hasattr(leds, "set_color"):
+        leds.set_color(str(norm["color"]))
+    if "brightness" in norm and hasattr(leds, "set_brightness"):
+        leds.set_brightness(int(norm["brightness"]))
+    if "preset" in norm and hasattr(leds, "set_preset"):
+        leds.set_preset(str(norm["preset"]))
+    dev_state.merge_leds(norm)
 
 def _apply_music_from_snapshot(mraw: Dict[str, Any]):
     """
     mraw: {"status":"play|pause","volume":0..100,...}
-    On applique en 2 temps : volume puis statut.
+    On applique en 2 temps : volume puis statut → puis relire l’état réel.
     """
     try:
         if "volume" in mraw:
@@ -148,7 +159,7 @@ def _apply_music_from_snapshot(mraw: Dict[str, Any]):
                 music.play()
             elif st == "pause":
                 music.pause()
-        _update_state_music_from_driver()
+        dev_state.set_music(music.get_state())
     except Exception as e:
         print("⚠️ apply music snapshot:", e)
 
@@ -297,9 +308,9 @@ def on_music_cmd(payload):
     if payload.get("deviceId") not in (None, DEVICE_ID): return
     try:
         data = payload.get("music", payload)
-        # {action: play|pause|next|prev}
-        music.apply(data)
-        _update_state_music_from_driver()
+        # {action: play|pause|next|prev} ou {"volume":...}
+        st = music.apply(data)
+        dev_state.set_music(st)
         _ack_ok("music")
         emit_state()
     except Exception as e:
@@ -311,19 +322,35 @@ def on_music_volume(payload):
     if payload.get("deviceId") not in (None, DEVICE_ID): return
     try:
         data = payload.get("music", payload)
-        # accepte {"value":..} ou {"volume":..}
-        if "value" in data:
-            music.apply({"volume": int(data["value"])})
-        elif "volume" in data:
-            music.apply({"volume": int(data["volume"])})
-        else:
+        v = data.get("value", data.get("volume", None))
+        if v is None:
             raise ValueError("Missing volume/value")
-        _update_state_music_from_driver()
-        _ack_ok("music:volume")
+        st = music.set_volume(int(v))
+        dev_state.set_music(st)
+        _ack_ok("music:volume", {"volume": st.get("volume")})
         emit_state()
     except Exception as e:
         print("⚠️ Music volume:", e)
         _ack_err("music:volume", str(e))
+
+# Optionnel: handler combiné (si l'app envoie tout d'un coup)
+@sio.on("music:update", namespace=NS)
+def on_music_update(payload):
+    if payload.get("deviceId") not in (None, DEVICE_ID): return
+    try:
+        data = payload.get("music", payload)
+        # applique volume puis action éventuelle
+        if "volume" in data or "value" in data:
+            v = int(data.get("volume", data.get("value")))
+            music.set_volume(v)
+        if "action" in data:
+            music.apply({"action": data["action"]})
+        dev_state.set_music(music.get_state())
+        _ack_ok("music:update")
+        emit_state()
+    except Exception as e:
+        print("⚠️ music:update:", e)
+        _ack_err("music:update", str(e))
 
 # ---------- Main loop ----------
 _running = True
@@ -335,8 +362,10 @@ def sigterm(*_):
         leds.blackout()
     except:
         pass
-    try: sio.disconnect()
-    except: pass
+    try:
+        sio.disconnect()
+    except:
+        pass
     sys.exit(0)
 
 signal.signal(signal.SIGINT, sigterm)
@@ -349,6 +378,8 @@ def loop():
         if sio.connected and (now - last_hb) >= HEARTBEAT:
             last_hb = now
             post_heartbeat()
+            # on envoie périodiquement l'état réel (inclut volume à jour)
+            emit_state()
         time.sleep(0.2)
 
 def connect_forever():
