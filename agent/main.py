@@ -70,6 +70,7 @@ EMIT_THROTTLE_SEC = 0.2
 _last_sink_check: float = 0.0
 _last_music_poll: float = -1e9  # poll immédiat au boot
 _last_sink_volume: Optional[int] = None
+_last_db_music_seen: Optional[Dict[str, Any]] = None   # pour logs/détection de changements DB
 
 # ---------- API helpers ----------
 def _fetch_api_state_raw() -> Optional[str]:
@@ -430,8 +431,10 @@ def _poll_music_from_db():
     - On lit la DB (GET)
     - On lit le volume réel du sink
     - Si DB.volume != sink.volume -> on applique immédiatement DB.volume
-    - On logue tout (y compris le JSON brut via _fetch_api_state())
+    - Log complet + réémission de l'état
     """
+    global _last_db_music_seen
+
     data = _fetch_api_state()
     if not isinstance(data, dict):
         print("🔎 POLL tick → pas de JSON dict (skip)")
@@ -441,6 +444,13 @@ def _poll_music_from_db():
     if not isinstance(db_music, dict):
         print("🔎 POLL tick → pas de music dict (skip)")
         return
+
+    # log de détection de changements DB
+    if _last_db_music_seen is None or any(db_music.get(k) != (_last_db_music_seen or {}).get(k) for k in ("status", "volume")):
+        print(f"🆕 DB change detected → {db_music}")
+        _last_db_music_seen = dict(db_music)
+    else:
+        print(f"🔁 DB unchanged → {db_music}")
 
     wanted_vol = db_music.get("volume")
     wanted_st  = (db_music.get("status") or "").lower()
