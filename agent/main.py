@@ -67,10 +67,8 @@ _last_report: Optional[Dict[str, Any]] = None
 _last_emit_ts: float = 0.0
 EMIT_THROTTLE_SEC = 0.2
 
-_last_db_music: Optional[Dict[str, Any]] = None
-_last_music_poll: float = 0.0
-
 _last_sink_check: float = 0.0
+_last_music_poll: float = 0.0
 _last_sink_volume: Optional[int] = None
 
 # ---------- API helpers ----------
@@ -305,7 +303,8 @@ def on_leds_state(payload):
     if not _accept_for_me(payload): return
     try:
         norm = _coerce_leds_payload(payload)
-        if "on" not in norm: raise ValueError("Missing 'on'")
+        if "on" not in norm: raise ValueError("Missing 'on'"
+                                              )
         _apply_leds({"on": norm["on"]})
         _ack_ok("leds:state", {"on": norm["on"]})
         emit_state(tag_for_api_log="leds:state")
@@ -420,32 +419,50 @@ signal.signal(signal.SIGINT, sigterm)
 signal.signal(signal.SIGTERM, sigterm)
 
 def _poll_music_from_db():
-    global _last_db_music
+    """
+    Lecture périodique de la DB et alignement strict:
+    - On lit la DB (GET)
+    - On lit le volume réel du sink
+    - Si DB.volume != sink.volume -> on applique immédiatement DB.volume
+    - On logue tout (y compris le JSON brut via _fetch_api_state())
+    """
     data = _fetch_api_state()
-    if not isinstance(data, dict): return
-    db_music = data.get("music") or {}
-    if not isinstance(db_music, dict): return
-
-    sink_now = music.get_state().get("volume")
-    print(f"🔎 POLL DB music={db_music} • sink_now={sink_now}%")
-
-    if _last_db_music is None:
-        _last_db_music = dict(db_music)
-        # alignement immédiat au premier passage
-        _apply_music_from_snapshot(db_music, source="POLL(first)")
-        emit_state(tag_for_api_log="poll(first)")
+    if not isinstance(data, dict):
+        print("🔎 POLL tick → pas de JSON dict (skip)")
         return
 
-    wanted_vol   = db_music.get("volume")
-    wanted_state = (db_music.get("status") or "").lower()
-    last_vol     = _last_db_music.get("volume")
-    last_state   = (_last_db_music.get("status") or "").lower()
+    db_music = data.get("music") or {}
+    if not isinstance(db_music, dict):
+        print("🔎 POLL tick → pas de music dict (skip)")
+        return
 
-    if wanted_vol != last_vol or wanted_state != last_state:
-        print(f"🔁 POLL change detected → {db_music}")
-        _apply_music_from_snapshot(db_music, source="POLL")
+    wanted_vol = db_music.get("volume")
+    wanted_st  = (db_music.get("status") or "").lower()
+
+    sink_state = music.get_state()
+    sink_vol   = sink_state.get("volume")
+    sink_st    = (sink_state.get("status") or "").lower()
+
+    print(f"🔎 POLL tick → DB {{status:{wanted_st}, volume:{wanted_vol}}} • SINK {{status:{sink_st}, volume:{sink_vol}}}")
+
+    # Aligne volume si différent
+    if isinstance(wanted_vol, int) and sink_vol != wanted_vol:
+        print(f"🔁 POLL APPLY volume DB {wanted_vol}% → SINK {sink_vol}%")
+        music.set_volume(int(wanted_vol))
+        sink_after = music.get_state().get("volume")
+        print(f"✅ POLL done: sink now {sink_after}%")
+        dev_state.set_music(music.get_state())
         emit_state(tag_for_api_log="poll/music")
-        _last_db_music = dict(db_music)
+
+    # Aligne play/pause si différent
+    if wanted_st in ("play", "pause") and wanted_st != sink_st:
+        print(f"🔁 POLL APPLY status DB {wanted_st} → SINK {sink_st}")
+        if wanted_st == "play":
+            music.play()
+        else:
+            music.pause()
+        dev_state.set_music(music.get_state())
+        emit_state(tag_for_api_log="poll/music")
 
 def _watch_sink_volume():
     """Détecte les changements de volume OS (boutons tel, OS…) et réémet l'état immédiatement."""
@@ -469,19 +486,26 @@ def loop():
     while _running:
         now = time.time()
 
+        # Heartbeat quand connecté
         if sio.connected and (now - last_hb) >= HEARTBEAT:
             last_hb = now
             post_heartbeat()
 
-        if sio.connected and (now - _last_music_poll) >= MUSIC_POLL_SEC:
+        # *** POLL DB: TOUJOURS ACTIF, WS ou pas ***
+        if (now - _last_music_poll) >= MUSIC_POLL_SEC:
             _last_music_poll = now
-            try: _poll_music_from_db()
-            except Exception as e: print("ℹ️ poll music fail:", e)
+            try:
+                _poll_music_from_db()
+            except Exception as e:
+                print("ℹ️ poll music fail:", e)
 
+        # Watch sink local
         if (now - _last_sink_check) >= SINK_WATCH_SEC:
             _last_sink_check = now
-            try: _watch_sink_volume()
-            except Exception as e: print("ℹ️ sink watch fail:", e)
+            try:
+                _watch_sink_volume()
+            except Exception as e:
+                print("ℹ️ sink watch fail:", e)
 
         time.sleep(0.15)
 
