@@ -51,7 +51,7 @@ NS        = str(cfg.get("namespace", "/agent"))
 DEVICE_ID = str(cfg["device_id"])
 API_KEY   = str(cfg["api_key"])
 HEARTBEAT = int(cfg.get("heartbeat_sec", 20))
-FALLBACK_LOCAL_ON_BOOT = bool(cfg.get("fallback_local_on_boot", False))  # False par défaut
+FALLBACK_LOCAL_ON_BOOT = bool(cfg.get("fallback_local_on_boot", False))
 
 def _auth_headers():
     return {
@@ -73,9 +73,30 @@ _last_report: Optional[Dict[str, Any]] = None
 _last_emit_ts: float = 0.0
 EMIT_THROTTLE_SEC = 0.25
 
+# ---------- Helpers: API snapshot logging ----------
+def _fetch_api_state() -> Optional[Dict[str, Any]]:
+    url = f"{API_BASE}/devices/{DEVICE_ID}/state"
+    try:
+        r = requests.get(url, headers=_auth_headers(), timeout=5)
+        if r.status_code == 200:
+            return r.json()
+        else:
+            print(f"ℹ️ API GET state non-200: {r.status_code} {r.text[:200]}")
+    except Exception as e:
+        print("ℹ️ API GET state échec:", e)
+    return None
+
+def _log_api_state(tag: str):
+    data = _fetch_api_state()
+    if isinstance(data, dict):
+        leds_db = data.get("leds")
+        music_db = data.get("music")
+        print(f"🎯 API state after {tag}: leds={leds_db} • music={music_db}")
+    else:
+        print(f"🎯 API state after {tag}: (none)")
+
 # ---------- State helpers ----------
 def _refresh_runtime_subsystems_into_state() -> None:
-    """Relit les sous-systèmes runtime (audio) et pousse dans le state local."""
     try:
         m = music.get_state()  # lit volume réel via pactl
         dev_state.set_music(m)
@@ -94,7 +115,7 @@ def _current_snapshot() -> Dict[str, Any]:
         out["widgets"] = snap["widgets"]
     return out
 
-def emit_state(force: bool = False):
+def emit_state(force: bool = False, *, tag_for_api_log: Optional[str] = None):
     global _last_report, _last_emit_ts
     now = time.time()
     if not force and (now - _last_emit_ts) < EMIT_THROTTLE_SEC:
@@ -111,6 +132,9 @@ def emit_state(force: bool = False):
         sio.emit("state:report", payload, namespace=NS)
     except Exception as e:
         print("⚠️ state:report erreur:", e)
+    # Log côté API juste après (lecture REST)
+    if tag_for_api_log:
+        _log_api_state(tag_for_api_log)
 
 # ---------- LEDs helpers ----------
 def _coerce_leds_payload(raw: Dict[str, Any]) -> Dict[str, Any]:
@@ -146,10 +170,6 @@ def _apply_leds(norm: Dict[str, Any]):
 
 # ---------- Music helpers ----------
 def _apply_music_from_snapshot(mraw: Dict[str, Any], *, source: str):
-    """
-    mraw: {"status":"play|pause","volume":0..100,...}
-    Applique volume puis statut. Log avant/après sur le volume réel.
-    """
     try:
         before = music.get_state().get("volume")
         if "volume" in mraw:
@@ -168,11 +188,6 @@ def _apply_music_from_snapshot(mraw: Dict[str, Any], *, source: str):
         print("⚠️ apply music snapshot:", e)
 
 def _handle_volume_payload(payload: Dict[str, Any], *, source: str):
-    """
-    Accepte {"music":{...}} ou payload direct.
-    Cherche volume sous clés: value | volume.
-    Log avant/après volume réel.
-    """
     data = payload.get("music", payload)
     v = data.get("value", data.get("volume", None))
     if v is None:
@@ -195,7 +210,7 @@ def apply_snapshot(snapshot: Dict[str, Any], *, reason: str = "unknown"):
             _apply_leds(_coerce_leds_payload(snapshot["leds"]))
         if "music" in snapshot and isinstance(snapshot["music"], dict):
             _apply_music_from_snapshot(snapshot["music"], source=f"{reason}/state:apply")
-        emit_state(force=True)
+        emit_state(force=True, tag_for_api_log=f"{reason}/state:apply")
     except Exception as e:
         print("⚠️ apply_snapshot:", e)
 
@@ -252,7 +267,7 @@ def connect():
             if isinstance(leds_cfg, dict):
                 _apply_leds(_coerce_leds_payload(leds_cfg))
                 print("✅ Boot LEDs (fallback local) appliqué:", leds_cfg)
-                emit_state(force=True)
+                emit_state(force=True, tag_for_api_log="boot-local")
         except Exception as e:
             print("⚠️ Boot fallback error:", e)
 
@@ -295,7 +310,7 @@ def on_leds_update(payload):
         norm = _coerce_leds_payload(payload.get("leds", payload))
         _apply_leds(norm)
         _ack_ok("leds")
-        emit_state()
+        emit_state(tag_for_api_log="leds:update")
     except Exception as e:
         print("⚠️ LEDs update:", e)
         _ack_err("leds", str(e))
@@ -308,7 +323,7 @@ def on_leds_state(payload):
         if "on" not in norm: raise ValueError("Missing 'on'")
         _apply_leds({"on": norm["on"]})
         _ack_ok("leds:state", {"on": norm["on"]})
-        emit_state()
+        emit_state(tag_for_api_log="leds:state")
     except Exception as e:
         print("⚠️ LEDs state:", e)
         _ack_err("leds:state", str(e))
@@ -322,34 +337,30 @@ def on_leds_style(payload):
             raise ValueError("Provide one of color|brightness|preset")
         _apply_leds({k: v for k, v in norm.items() if k in ("color", "brightness", "preset")})
         _ack_ok("leds:style", {"applied": True})
-        emit_state()
+        emit_state(tag_for_api_log="leds:style")
     except Exception as e:
         print("⚠️ LEDs style:", e)
         _ack_err("leds:style", str(e))
 
 # ---------- Music ----------
-# 1) Volume dédié
 @sio.on("music:volume", namespace=NS)
 def on_music_volume(payload):
     if payload.get("deviceId") not in (None, DEVICE_ID): return
     try:
         _handle_volume_payload(payload, source="music:volume")
         _ack_ok("music:volume")
-        emit_state()
+        emit_state(tag_for_api_log="music:volume")
     except Exception as e:
         print("⚠️ Music volume:", e)
         _ack_err("music:volume", str(e))
 
-# 2) Commandes play/pause/next/prev (+ volume possible)
 @sio.on("music:cmd", namespace=NS)
 def on_music_cmd(payload):
     if payload.get("deviceId") not in (None, DEVICE_ID): return
     try:
         data = payload.get("music", payload)
-        # volume éventuel dans le même message
         if "volume" in data or "value" in data:
             _handle_volume_payload(data, source="music:cmd")
-        # action
         if "action" in data:
             before = music.get_state().get("volume")
             st = music.apply({"action": data["action"]})
@@ -357,12 +368,11 @@ def on_music_cmd(payload):
             print(f"🎵 [music:cmd] action={data['action']} (sink vol now {after}% ; was {before}%)")
             dev_state.set_music(st)
         _ack_ok("music")
-        emit_state()
+        emit_state(tag_for_api_log="music:cmd")
     except Exception as e:
         print("⚠️ Music cmd:", e)
         _ack_err("music", str(e))
 
-# 3) Update combiné
 @sio.on("music:update", namespace=NS)
 def on_music_update(payload):
     if payload.get("deviceId") not in (None, DEVICE_ID): return
@@ -377,12 +387,12 @@ def on_music_update(payload):
             print(f"🎵 [music:update] action={data['action']} (sink vol now {after}% ; was {before}%)")
             dev_state.set_music(st)
         _ack_ok("music:update")
-        emit_state()
+        emit_state(tag_for_api_log="music:update")
     except Exception as e:
         print("⚠️ music:update:", e)
         _ack_err("music:update", str(e))
 
-# 4) Variantes tolérantes si l’app envoie différemment
+# Variantes tolérantes
 @sio.on("music", namespace=NS)
 def on_music_generic(payload):
     if payload.get("deviceId") not in (None, DEVICE_ID): return
@@ -394,7 +404,7 @@ def on_music_generic(payload):
             st = music.apply({"action": data["action"]})
             dev_state.set_music(st)
         _ack_ok("music(generic)")
-        emit_state()
+        emit_state(tag_for_api_log="music(generic)")
     except Exception as e:
         print("⚠️ music(generic):", e)
         _ack_err("music(generic)", str(e))
@@ -405,7 +415,7 @@ def on_control_volume(payload):
     try:
         _handle_volume_payload(payload, source="control:volume")
         _ack_ok("control:volume")
-        emit_state()
+        emit_state(tag_for_api_log="control:volume")
     except Exception as e:
         print("⚠️ control:volume:", e)
         _ack_err("control:volume", str(e))
@@ -436,7 +446,7 @@ def loop():
         if sio.connected and (now - last_hb) >= HEARTBEAT:
             last_hb = now
             post_heartbeat()
-            emit_state()  # inclut volume réel
+            emit_state(tag_for_api_log="heartbeat")
         time.sleep(0.2)
 
 def connect_forever():
