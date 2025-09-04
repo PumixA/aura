@@ -1,60 +1,73 @@
 # utils/state.py
 from __future__ import annotations
-import threading
 import time
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
-_lock = threading.RLock()
-
-# État local simple et propre (pas de 'ts' injecté dans le snapshot pour éviter le bruit)
-_state: Dict[str, Any] = {
-    "leds":  {"on": False, "color": "#FFFFFF", "brightness": 50, "preset": None},
-    "music": {"status": "pause", "volume": 40, "track": None},
-    "widgets": [],
+# État local unique. Tu peux initialiser comme tu veux.
+_last: Dict[str, Any] = {
+    "leds": { "on": False, "color": "#FFFFFF", "brightness": 50, "preset": None },
+    "music": { "status": "pause", "volume": 40, "track": None },
+    "widgets": None,
+    "ts": int(time.time()),
 }
 
+def _clamp(v: int, a: int, b: int) -> int:
+    return max(a, min(b, int(v)))
+
 def snapshot() -> Dict[str, Any]:
-    with _lock:
-        # retourner une copie pour éviter les mutations externes
-        return {
-            "leds": dict(_state.get("leds", {})),
-            "music": dict(_state.get("music", {})),
-            "widgets": list(_state.get("widgets", [])),
-        }
+    # retourne une shallow copy suffisante ici
+    return {
+        "leds": dict(_last.get("leds") or {}),
+        "music": dict(_last.get("music") or {}),
+        "widgets": _last.get("widgets"),
+        "ts": _last.get("ts"),
+    }
 
-def set_leds(leds: Dict[str, Any]) -> None:
-    with _lock:
-        cur = dict(_state.get("leds", {}))
-        cur.update({k: v for k, v in leds.items() if k in ("on", "color", "brightness", "preset")})
-        _state["leds"] = cur
+def set_music(m: Dict[str, Any]) -> None:
+    """Remplace l'état music local par ce qui vient du driver/DB."""
+    if "music" in m: m = m["music"]
+    cur = dict(_last.get("music") or {})
+    if "status" in m:
+        st = str(m["status"]).lower()
+        if st not in ("play", "pause"):
+            st = cur.get("status", "pause")
+        cur["status"] = st
+    if "volume" in m:
+        cur["volume"] = _clamp(m["volume"], 0, 100)
+    if "track" in m:
+        cur["track"] = m["track"]
+    _last["music"] = cur
+    _last["ts"] = int(time.time())
 
-def merge_leds(patch: Dict[str, Any]) -> None:
-    set_leds(patch)
+def merge_leds(d: Dict[str, Any]) -> None:
+    """Merge led fields (on/color/brightness/preset) dans _last.leds."""
+    leds = dict(_last.get("leds") or {})
+    if "on" in d:         leds["on"] = bool(d["on"])
+    if "color" in d:      leds["color"] = str(d["color"])
+    if "brightness" in d: leds["brightness"] = _clamp(d["brightness"], 0, 100)
+    if "preset" in d:     leds["preset"] = d["preset"] if d["preset"] not in (None, "") else None
+    _last["leds"] = leds
+    _last["ts"] = int(time.time())
 
-def set_music(music: Dict[str, Any]) -> None:
-    with _lock:
-        cur = dict(_state.get("music", {}))
-        for k in ("status", "volume", "track"):
-            if k in music:
-                cur[k] = music[k]
-        _state["music"] = cur
+def set_leds(d: Dict[str, Any]) -> None:
+    """Replace intégralement (optionnel)."""
+    _last["leds"] = {
+        "on": bool(d.get("on", False)),
+        "color": str(d.get("color", "#FFFFFF")),
+        "brightness": _clamp(d.get("brightness", 50), 0, 100),
+        "preset": d.get("preset"),
+    }
+    _last["ts"] = int(time.time())
 
 def set_widgets(items) -> None:
-    with _lock:
-        _state["widgets"] = list(items or [])
+    _last["widgets"] = items
+    _last["ts"] = int(time.time())
 
-# utilitaire (facultatif)
-def apply_patch(path: str, value: Any) -> None:
-    with _lock:
-        cur = _state
-        keys = path.split(".")
-        for k in keys[:-1]:
-            if k not in cur or not isinstance(cur[k], dict):
-                cur[k] = {}
-            cur = cur[k]
-        cur[keys[-1]] = value
-
-# debug helper (optionnel)
-def _touch_ts():
-    with _lock:
-        _state["_ts"] = int(time.time())
+def apply_patch(path: str, value):
+    """Compat: modifie une clé par chemin 'a.b.c'."""
+    cur = _last
+    keys = path.split(".")
+    for k in keys[:-1]:
+        cur = cur.setdefault(k, {})
+    cur[keys[-1]] = value
+    _last["ts"] = int(time.time())

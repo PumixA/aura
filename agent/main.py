@@ -52,6 +52,7 @@ DEVICE_ID = str(cfg["device_id"])
 API_KEY   = str(cfg["api_key"])
 HEARTBEAT = int(cfg.get("heartbeat_sec", 20))
 FALLBACK_LOCAL_ON_BOOT = bool(cfg.get("fallback_local_on_boot", False))
+MUSIC_POLL_SEC = int(cfg.get("music_poll_sec", 2))  # poll DB music
 
 def _auth_headers():
     return {
@@ -73,50 +74,54 @@ _last_report: Optional[Dict[str, Any]] = None
 _last_emit_ts: float = 0.0
 EMIT_THROTTLE_SEC = 0.25
 
-# --- DB polling (sécurité si aucun event WS n'arrive) ---
-_DB_POLL_SEC = 1.5
-_last_db_poll = 0.0
 _last_db_music: Optional[Dict[str, Any]] = None
+_last_music_poll: float = 0.0
+
+# ---------- API helpers ----------
+def _fetch_api_state_raw() -> Optional[str]:
+    url = f"{API_BASE}/devices/{DEVICE_ID}/state"
+    try:
+        r = requests.get(url, headers=_auth_headers(), timeout=5)
+        print(f"🟦 RAW GET {url} → {r.status_code}")
+        print("🟦 BODY:", r.text)
+        if r.status_code == 200:
+            return r.text
+    except Exception as e:
+        print("ℹ️ API GET state échec:", e)
+    return None
 
 def _fetch_api_state() -> Optional[Dict[str, Any]]:
     url = f"{API_BASE}/devices/{DEVICE_ID}/state"
     try:
         r = requests.get(url, headers=_auth_headers(), timeout=5)
+        print(f"🟦 RAW GET {url} → {r.status_code}")
+        print("🟦 BODY:", r.text)
         if r.status_code == 200:
             return r.json()
         else:
-            print(f"ℹ️ API GET state non-200: {r.status_code} {r.text[:180]}")
+            print(f"ℹ️ API GET state non-200: {r.status_code} {r.text[:200]}")
     except Exception as e:
         print("ℹ️ API GET state échec:", e)
     return None
 
-def _log_api_state(tag: str):
-    data = _fetch_api_state()
-    if isinstance(data, dict):
-        leds_db = data.get("leds")
-        music_db = data.get("music")
-        print(f"🎯 API state after {tag}: leds={leds_db} • music={music_db}")
-    else:
-        print(f"🎯 API state after {tag}: (none)")
-
 # ---------- State helpers ----------
-def _refresh_runtime_subsystems_into_state() -> None:
+def _refresh_runtime_music_into_state() -> None:
+    """Lit le volume/status REEL via utils/music et le pousse dans state."""
     try:
-        m = music.get_state()  # lit volume réel via pactl
+        m = music.get_state()
         dev_state.set_music(m)
     except Exception as e:
         print("ℹ️ refresh music state fail:", e)
 
 def _current_snapshot() -> Dict[str, Any]:
-    _refresh_runtime_subsystems_into_state()
+    # avant de snap, on injecte le réel côté musique
+    _refresh_runtime_music_into_state()
     snap = dev_state.snapshot()
-    if not isinstance(snap, dict):
-        return {}
+    if not isinstance(snap, dict): return {}
     out = {"deviceId": DEVICE_ID}
     if "leds" in snap:   out["leds"] = snap["leds"]
     if "music" in snap:  out["music"] = snap["music"]
-    if "widgets" in snap and snap["widgets"] is not None:
-        out["widgets"] = snap["widgets"]
+    if "widgets" in snap and snap["widgets"] is not None: out["widgets"] = snap["widgets"]
     return out
 
 def emit_state(force: bool = False, *, tag_for_api_log: Optional[str] = None):
@@ -125,10 +130,8 @@ def emit_state(force: bool = False, *, tag_for_api_log: Optional[str] = None):
     if not force and (now - _last_emit_ts) < EMIT_THROTTLE_SEC:
         return
     payload = _current_snapshot()
-    if not payload:
-        return
-    if (not force) and (_last_report == payload):
-        return
+    if not payload: return
+    if (not force) and (_last_report == payload): return
     _last_report = payload
     _last_emit_ts = now
     print("📤 state:report →", payload)
@@ -137,9 +140,9 @@ def emit_state(force: bool = False, *, tag_for_api_log: Optional[str] = None):
     except Exception as e:
         print("⚠️ state:report erreur:", e)
     if tag_for_api_log:
-        _log_api_state(tag_for_api_log)
+        _fetch_api_state_raw()
 
-# ---------- LEDs helpers ----------
+# ---------- LEDs ----------
 def _coerce_leds_payload(raw: Dict[str, Any]) -> Dict[str, Any]:
     p = dict(raw)
     out: Dict[str, Any] = {}
@@ -161,17 +164,13 @@ def _apply_leds(norm: Dict[str, Any]):
             return
         except Exception as e:
             print("⚠️ utils.leds.apply a échoué, fallback granular:", e)
-    if "on" in norm and hasattr(leds, "set_on"):
-        leds.set_on(bool(norm["on"]))
-    if "color" in norm and hasattr(leds, "set_color"):
-        leds.set_color(str(norm["color"]))
-    if "brightness" in norm and hasattr(leds, "set_brightness"):
-        leds.set_brightness(int(norm["brightness"]))
-    if "preset" in norm and hasattr(leds, "set_preset"):
-        leds.set_preset(str(norm["preset"]))
+    if "on" in norm and hasattr(leds, "set_on"): leds.set_on(bool(norm["on"]))
+    if "color" in norm and hasattr(leds, "set_color"): leds.set_color(str(norm["color"]))
+    if "brightness" in norm and hasattr(leds, "set_brightness"): leds.set_brightness(int(norm["brightness"]))
+    if "preset" in norm and hasattr(leds, "set_preset"): leds.set_preset(str(norm["preset"]))
     dev_state.merge_leds(norm)
 
-# ---------- Music helpers ----------
+# ---------- Music ----------
 def _apply_music_from_snapshot(mraw: Dict[str, Any], *, source: str):
     try:
         before = music.get_state().get("volume")
@@ -179,13 +178,11 @@ def _apply_music_from_snapshot(mraw: Dict[str, Any], *, source: str):
             req = int(mraw["volume"])
             music.set_volume(req)
             after = music.get_state().get("volume")
-            print(f"🔊 [{source}] volume snapshot asked {req}% → sink now {after}% (was {before}%)")
+            print(f"🔊 [{source}] DB→SYS volume {req}% → sink {after}% (was {before}%)")
         if "status" in mraw:
             st = str(mraw["status"]).lower()
-            if st == "play":
-                music.play()
-            elif st == "pause":
-                music.pause()
+            if st == "play":  music.play()
+            elif st == "pause": music.pause()
         dev_state.set_music(music.get_state())
     except Exception as e:
         print("⚠️ apply music snapshot:", e)
@@ -195,17 +192,14 @@ def _handle_volume_payload(payload: Dict[str, Any], *, source: str):
     v = data.get("value", data.get("volume", None))
     if v is None:
         raise ValueError("Missing volume/value")
-    try:
-        v = int(v)
-    except Exception:
-        raise ValueError("Volume must be int")
+    v = int(v)
     before = music.get_state().get("volume")
     st = music.set_volume(v)
     after = st.get("volume")
-    print(f"🔊 [{source}] volume requested {v}% → sink now {after}% (was {before}%)")
+    print(f"🔊 [{source}] requested {v}% → sink now {after}% (was {before}%)")
     dev_state.set_music(st)
 
-# ---------- Apply snapshot ----------
+# ---------- Apply snapshot / REST ----------
 def apply_snapshot(snapshot: Dict[str, Any], *, reason: str = "unknown"):
     print(f"⬇️  state:apply ({reason}) →", snapshot)
     try:
@@ -225,41 +219,12 @@ def pull_snapshot_rest() -> bool:
         return True
     return False
 
-# --- Poll DB & apply deltas (musique) ---
-def poll_db_and_apply_if_changed(now: float):
-    global _last_db_poll, _last_db_music
-    if (now - _last_db_poll) < _DB_POLL_SEC:
-        return
-    _last_db_poll = now
-    data = _fetch_api_state()
-    if not isinstance(data, dict):
-        return
-    mdb = data.get("music")
-    if not isinstance(mdb, dict):
-        return
-    # 1) première fois → on seed sans spammer
-    if _last_db_music is None:
-        _last_db_music = dict(mdb)
-        return
-    # 2) compare volume / status
-    changed = False
-    prev = _last_db_music
-    vol_prev = prev.get("volume")
-    vol_new  = mdb.get("volume")
-    st_prev  = str(prev.get("status", "")).lower()
-    st_new   = str(mdb.get("status", "")).lower()
-    if vol_new is not None and vol_new != vol_prev:
-        print(f"🛰️ DB-poll: volume delta {vol_prev} → {vol_new}")
-        _apply_music_from_snapshot({"volume": vol_new}, source="DB-poll")
-        changed = True
-    if st_new in ("play", "pause") and st_new != st_prev:
-        print(f"🛰️ DB-poll: status delta {st_prev} → {st_new}")
-        _apply_music_from_snapshot({"status": st_new}, source="DB-poll")
-        changed = True
-    if changed:
-        _last_db_music = dict(mdb)
-        emit_state(tag_for_api_log="db-poll-apply")
+# ---------- WS guards ----------
+def _accept_for_me(payload: Dict[str, Any]) -> bool:
+    did = payload.get("deviceId")
+    return (did is None) or (did == DEVICE_ID)
 
+# ---------- WS ----------
 def _ack_ok(evt_type: str, data: Optional[Dict[str, Any]] = None):
     sio.emit("ack", {"deviceId": DEVICE_ID, "type": evt_type, "status": "ok", "data": data or {}}, namespace=NS)
 
@@ -277,7 +242,6 @@ def post_heartbeat():
     except Exception as e:
         print("⚠️ Heartbeat HTTP échec:", e)
 
-# ---------- WS Handlers ----------
 @sio.event(namespace=NS)
 def connect():
     print(f"✅ Connecté au hub {NS}")
@@ -317,23 +281,23 @@ def disconnect():
 
 @sio.on("agent:ack", namespace=NS)
 def on_agent_ack(payload):
-    if payload.get("deviceId") not in (None, DEVICE_ID): return
+    if not _accept_for_me(payload): return
     print("✅ ACK serveur:", payload)
 
 @sio.on("presence", namespace=NS)
 def on_presence(payload):
-    if payload.get("deviceId") not in (None, DEVICE_ID): return
+    if not _accept_for_me(payload): return
     print("👀 Presence:", payload)
 
 @sio.on("state:apply", namespace=NS)
 def on_state_apply(payload):
-    if payload.get("deviceId") not in (None, DEVICE_ID): return
+    if not _accept_for_me(payload): return
     apply_snapshot({k: v for k, v in payload.items() if k in ("leds", "music", "widgets")}, reason="WS")
 
-# ---------- LEDs ----------
+# LEDs
 @sio.on("leds:update", namespace=NS)
 def on_leds_update(payload):
-    if payload.get("deviceId") not in (None, DEVICE_ID): return
+    if not _accept_for_me(payload): return
     try:
         norm = _coerce_leds_payload(payload.get("leds", payload))
         _apply_leds(norm)
@@ -345,7 +309,7 @@ def on_leds_update(payload):
 
 @sio.on("leds:state", namespace=NS)
 def on_leds_state(payload):
-    if payload.get("deviceId") not in (None, DEVICE_ID): return
+    if not _accept_for_me(payload): return
     try:
         norm = _coerce_leds_payload(payload)
         if "on" not in norm: raise ValueError("Missing 'on'")
@@ -358,7 +322,7 @@ def on_leds_state(payload):
 
 @sio.on("leds:style", namespace=NS)
 def on_leds_style(payload):
-    if payload.get("deviceId") not in (None, DEVICE_ID): return
+    if not _accept_for_me(payload): return
     try:
         norm = _coerce_leds_payload(payload)
         if not any(k in norm for k in ("color", "brightness", "preset")):
@@ -370,10 +334,10 @@ def on_leds_style(payload):
         print("⚠️ LEDs style:", e)
         _ack_err("leds:style", str(e))
 
-# ---------- Music (toutes variantes probables) ----------
+# Music
 @sio.on("music:volume", namespace=NS)
 def on_music_volume(payload):
-    if payload.get("deviceId") not in (None, DEVICE_ID): return
+    if not _accept_for_me(payload): return
     try:
         _handle_volume_payload(payload, source="music:volume")
         _ack_ok("music:volume")
@@ -384,7 +348,7 @@ def on_music_volume(payload):
 
 @sio.on("music:cmd", namespace=NS)
 def on_music_cmd(payload):
-    if payload.get("deviceId") not in (None, DEVICE_ID): return
+    if not _accept_for_me(payload): return
     try:
         data = payload.get("music", payload)
         if "volume" in data or "value" in data:
@@ -393,7 +357,7 @@ def on_music_cmd(payload):
             before = music.get_state().get("volume")
             st = music.apply({"action": data["action"]})
             after = st.get("volume")
-            print(f"🎵 [music:cmd] action={data['action']} (sink vol now {after}% ; was {before}%)")
+            print(f"🎵 [music:cmd] action={data['action']} (sink {after}% ; was {before}%)")
             dev_state.set_music(st)
         _ack_ok("music")
         emit_state(tag_for_api_log="music:cmd")
@@ -403,7 +367,7 @@ def on_music_cmd(payload):
 
 @sio.on("music:update", namespace=NS)
 def on_music_update(payload):
-    if payload.get("deviceId") not in (None, DEVICE_ID): return
+    if not _accept_for_me(payload): return
     try:
         data = payload.get("music", payload)
         if "volume" in data or "value" in data:
@@ -412,7 +376,7 @@ def on_music_update(payload):
             before = music.get_state().get("volume")
             st = music.apply({"action": data["action"]})
             after = st.get("volume")
-            print(f"🎵 [music:update] action={data['action']} (sink vol now {after}% ; was {before}%)")
+            print(f"🎵 [music:update] action={data['action']} (sink {after}% ; was {before}%)")
             dev_state.set_music(st)
         _ack_ok("music:update")
         emit_state(tag_for_api_log="music:update")
@@ -422,7 +386,7 @@ def on_music_update(payload):
 
 @sio.on("music", namespace=NS)
 def on_music_generic(payload):
-    if payload.get("deviceId") not in (None, DEVICE_ID): return
+    if not _accept_for_me(payload): return
     try:
         data = payload.get("music", payload)
         if "volume" in data or "value" in data:
@@ -438,7 +402,7 @@ def on_music_generic(payload):
 
 @sio.on("control:volume", namespace=NS)
 def on_control_volume(payload):
-    if payload.get("deviceId") not in (None, DEVICE_ID): return
+    if not _accept_for_me(payload): return
     try:
         _handle_volume_payload(payload, source="control:volume")
         _ack_ok("control:volume")
@@ -446,31 +410,6 @@ def on_control_volume(payload):
     except Exception as e:
         print("⚠️ control:volume:", e)
         _ack_err("control:volume", str(e))
-
-@sio.on("control", namespace=NS)
-def on_control(payload):
-    if payload.get("deviceId") not in (None, DEVICE_ID): return
-    # tolérant: accepte {action, volume/value} comme music
-    try:
-        data = payload.get("music", payload)
-        if "volume" in data or "value" in data:
-            _handle_volume_payload(data, source="control")
-        if "action" in data:
-            st = music.apply({"action": data["action"]})
-            dev_state.set_music(st)
-        _ack_ok("control")
-        emit_state(tag_for_api_log="control")
-    except Exception as e:
-        print("⚠️ control:", e)
-        _ack_err("control", str(e))
-
-@sio.on("control:update", namespace=NS)
-def on_control_update(payload):
-    on_control(payload)  # même traitement
-
-@sio.on("control:music", namespace=NS)
-def on_control_music(payload):
-    on_music_generic(payload)  # même traitement
 
 # ---------- Main loop ----------
 _running = True
@@ -482,25 +421,55 @@ def sigterm(*_):
         leds.blackout()
     except:
         pass
-    try:
-        sio.disconnect()
-    except:
-        pass
+    try: sio.disconnect()
+    except: pass
     sys.exit(0)
 
 signal.signal(signal.SIGINT, sigterm)
 signal.signal(signal.SIGTERM, sigterm)
 
+def _poll_music_from_db():
+    global _last_db_music
+    data = _fetch_api_state()
+    if not isinstance(data, dict):
+        return
+    db_music = data.get("music") or {}
+    if not isinstance(db_music, dict):
+        return
+
+    # log de debug : DB vs sink actuel
+    sink_before = music.get_state().get("volume")
+    print(f"🔎 POLL DB music={db_music} • sink_now={sink_before}%")
+
+    if _last_db_music is None:
+        _last_db_music = dict(db_music)
+        return
+
+    wanted_vol   = db_music.get("volume")
+    wanted_state = (db_music.get("status") or "").lower()
+    last_vol     = _last_db_music.get("volume")
+    last_state   = (_last_db_music.get("status") or "").lower()
+
+    if wanted_vol != last_vol or wanted_state != last_state:
+        print(f"🔁 POLL change detected → {db_music}")
+        _apply_music_from_snapshot(db_music, source="POLL")
+        emit_state(tag_for_api_log="poll/music")
+        _last_db_music = dict(db_music)
+
 def loop():
+    global _last_music_poll
     last_hb = 0.0
     while _running:
         now = time.time()
         if sio.connected and (now - last_hb) >= HEARTBEAT:
             last_hb = now
             post_heartbeat()
-            emit_state(tag_for_api_log="heartbeat")
-        # Poll DB pour capter volume/status si aucun event ne vient
-        poll_db_and_apply_if_changed(now)
+        if sio.connected and (now - _last_music_poll) >= MUSIC_POLL_SEC:
+            _last_music_poll = now
+            try:
+                _poll_music_from_db()
+            except Exception as e:
+                print("ℹ️ poll music fail:", e)
         time.sleep(0.2)
 
 def connect_forever():
