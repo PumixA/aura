@@ -1,4 +1,3 @@
-# main.py
 import signal
 import sys
 import time
@@ -53,8 +52,8 @@ API_KEY   = str(cfg["api_key"])
 
 HEARTBEAT = int(cfg.get("heartbeat_sec", 10))
 FALLBACK_LOCAL_ON_BOOT = bool(cfg.get("fallback_local_on_boot", False))
-MUSIC_POLL_SEC = float(cfg.get("music_poll_sec", 2))   # poll DB
-SINK_WATCH_SEC = float(cfg.get("sink_watch_sec", 0.5)) # watch volume OS
+MUSIC_POLL_SEC = float(cfg.get("music_poll_sec", 1.0))   # plus nerveux
+SINK_WATCH_SEC = float(cfg.get("sink_watch_sec", 0.3))
 
 def _auth_headers():
     return {"Authorization": f"ApiKey {API_KEY}", "x-device-id": DEVICE_ID, "Content-Type": "application/json"}
@@ -70,7 +69,7 @@ EMIT_THROTTLE_SEC = 0.2
 _last_sink_check: float = 0.0
 _last_music_poll: float = -1e9  # poll immédiat au boot
 _last_sink_volume: Optional[int] = None
-_last_db_music_seen: Optional[Dict[str, Any]] = None   # pour logs/détection de changements DB
+_last_db_music_seen: Optional[Dict[str, Any]] = None
 
 # ---------- API helpers ----------
 def _fetch_api_state_raw() -> Optional[str]:
@@ -101,14 +100,21 @@ def _fetch_api_state() -> Optional[Dict[str, Any]]:
 
 # ---------- State helpers ----------
 def _refresh_runtime_music_into_state() -> None:
+    """
+    Ne pousse dans state que si on a une vraie lecture volume.
+    Évite de re-forcer un 40% par défaut au boot.
+    """
     try:
-        m = music.get_state()       # lit volume/status réels
-        dev_state.set_music(m)
+        m = music.get_state()
+        if m.get("volume") is not None:
+            dev_state.set_music(m)
+        else:
+            print("ℹ️ get_state volume=None → on n'écrase pas l'état actuel")
     except Exception as e:
         print("ℹ️ refresh music state fail:", e)
 
 def _current_snapshot() -> Dict[str, Any]:
-    _refresh_runtime_music_into_state()   # toujours injecter le réel musique
+    _refresh_runtime_music_into_state()
     snap = dev_state.snapshot()
     if not isinstance(snap, dict): return {}
     out = {"deviceId": DEVICE_ID}
@@ -150,13 +156,13 @@ def _coerce_leds_payload(raw: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 def _apply_leds(norm: Dict[str, Any]):
-    if hasattr(leds, "apply") and callable(getattr(leds, "apply")):
-        try:
+    try:
+        if hasattr(leds, "apply") and callable(getattr(leds, "apply")):
             leds.apply({"leds": norm})
             dev_state.merge_leds(norm)
             return
-        except Exception as e:
-            print("⚠️ utils.leds.apply a échoué, fallback granular:", e)
+    except Exception as e:
+        print("⚠️ utils.leds.apply a échoué, fallback granular:", e)
     if "on" in norm and hasattr(leds, "set_on"): leds.set_on(bool(norm["on"]))
     if "color" in norm and hasattr(leds, "set_color"): leds.set_color(str(norm["color"]))
     if "brightness" in norm and hasattr(leds, "set_brightness"): leds.set_brightness(int(norm["brightness"]))
@@ -164,31 +170,62 @@ def _apply_leds(norm: Dict[str, Any]):
     dev_state.merge_leds(norm)
 
 # ---------- Music (DB→SYS + handlers) ----------
+def _coerce_db_volume(v) -> Optional[int]:
+    if v is None:
+        return None
+    try:
+        return max(0, min(100, int(v)))
+    except Exception:
+        try:
+            return max(0, min(100, int(float(str(v).strip()))))
+        except Exception:
+            return None
+
 def _apply_music_from_snapshot(mraw: Dict[str, Any], *, source: str):
     try:
-        before = music.get_state().get("volume")
+        # Normalise
+        norm: Dict[str, Any] = {}
         if "volume" in mraw:
-            req = int(mraw["volume"])
-            music.set_volume(req)
-            after = music.get_state().get("volume")
-            print(f"🔊 [{source}] DB→SYS volume {req}% → sink {after}% (was {before}%)")
+            cv = _coerce_db_volume(mraw["volume"])
+            if cv is not None:
+                norm["volume"] = cv
         if "status" in mraw:
-            st = str(mraw["status"]).lower()
-            if st == "play":  music.play()
-            elif st == "pause": music.pause()
+            st = str(mraw["status"]).lower().strip()
+            if st in ("play", "pause"):
+                norm["status"] = st
+
+        before = music.get_state().get("volume")
+
+        print(f"🎯 [{source}] MUSIC snapshot norm: {norm}")
+
+        if "volume" in norm:
+            want = norm["volume"]
+            print(f"🧭 DECIDE: set volume → {want}% (before sink={before}%)")
+            st = music.set_volume(want)              # APPLY
+            after = st.get("volume")
+            print(f"✅ VERIFY: sink volume={after}% (wanted={want}%)")
+
+        if norm.get("status") == "play":
+            print("🧭 DECIDE: status → play")
+            music.play()
+        elif norm.get("status") == "pause":
+            print("🧭 DECIDE: status → pause")
+            music.pause()
+
         dev_state.set_music(music.get_state())
     except Exception as e:
         print("⚠️ apply music snapshot:", e)
 
 def _handle_volume_payload(payload: Dict[str, Any], *, source: str):
     data = payload.get("music", payload)
-    v = data.get("value", data.get("volume", None))
-    if v is None: raise ValueError("Missing volume/value")
-    v = int(v)
+    cv = _coerce_db_volume(data.get("value", data.get("volume", None)))
+    if cv is None:
+        raise ValueError("Missing/invalid volume/value (expected 0..100)")
     before = music.get_state().get("volume")
-    st = music.set_volume(v)
+    print(f"🧭 [{source}] DECIDE: set volume {cv}% (before sink={before}%)")
+    st = music.set_volume(cv)
     after = st.get("volume")
-    print(f"🔊 [{source}] requested {v}% → sink now {after}% (was {before}%)")
+    print(f"✅ [{source}] VERIFY: sink volume={after}% (wanted={cv}%)")
     dev_state.set_music(st)
 
 # ---------- Apply snapshot / REST ----------
@@ -427,52 +464,48 @@ signal.signal(signal.SIGTERM, sigterm)
 
 def _poll_music_from_db():
     """
-    Lecture périodique de la DB et alignement strict:
-    - On lit la DB (GET)
-    - On lit le volume réel du sink
-    - Si DB.volume != sink.volume -> on applique immédiatement DB.volume
-    - Log complet + réémission de l'état
+    Pipeline: DETECT → FETCH(DB) → DECIDE → APPLY(pactl/playerctl) → VERIFY → REPORT
     """
     global _last_db_music_seen
 
     data = _fetch_api_state()
     if not isinstance(data, dict):
-        print("🔎 POLL tick → pas de JSON dict (skip)")
+        print("🔎 POLL → pas de JSON dict (skip)")
         return
 
     db_music = data.get("music") or {}
     if not isinstance(db_music, dict):
-        print("🔎 POLL tick → pas de music dict (skip)")
+        print("🔎 POLL → pas de music dict (skip)")
         return
 
-    # log de détection de changements DB
+    # DETECT changements DB
     if _last_db_music_seen is None or any(db_music.get(k) != (_last_db_music_seen or {}).get(k) for k in ("status", "volume")):
-        print(f"🆕 DB change detected → {db_music}")
+        print(f"🆕 DB changed → {db_music}")
         _last_db_music_seen = dict(db_music)
     else:
         print(f"🔁 DB unchanged → {db_music}")
 
-    wanted_vol = db_music.get("volume")
-    wanted_st  = (db_music.get("status") or "").lower()
-
+    # FETCH sink
     sink_state = music.get_state()
     sink_vol   = sink_state.get("volume")
     sink_st    = (sink_state.get("status") or "").lower()
+    wanted_vol = _coerce_db_volume(db_music.get("volume"))
+    wanted_st  = (str(db_music.get("status") or "").lower())
 
-    print(f"🔎 POLL tick → DB {{status:{wanted_st}, volume:{wanted_vol}}} • SINK {{status:{sink_st}, volume:{sink_vol}}}")
+    print(f"🔎 COMPARE DB{{status:{wanted_st}, volume:{wanted_vol}}} vs SINK{{status:{sink_st}, volume:{sink_vol}}}")
 
-    # Aligne volume si différent
-    if isinstance(wanted_vol, int) and sink_vol != wanted_vol:
-        print(f"🔁 POLL APPLY volume DB {wanted_vol}% → SINK {sink_vol}%")
-        music.set_volume(int(wanted_vol))
-        sink_after = music.get_state().get("volume")
-        print(f"✅ POLL done: sink now {sink_after}%")
-        dev_state.set_music(music.get_state())
+    # DECIDE/APPLY volume
+    if wanted_vol is not None and sink_vol != wanted_vol:
+        print(f"🧭 DECIDE volume: {sink_vol}% → {wanted_vol}%")
+        st = music.set_volume(wanted_vol)     # APPLY
+        after = st.get("volume")
+        print(f"✅ VERIFY volume: sink={after}% (wanted={wanted_vol}%)")
+        dev_state.set_music(st)
         emit_state(tag_for_api_log="poll/music")
 
-    # Aligne play/pause si différent
+    # DECIDE/APPLY status
     if wanted_st in ("play", "pause") and wanted_st != sink_st:
-        print(f"🔁 POLL APPLY status DB {wanted_st} → SINK {sink_st}")
+        print(f"🧭 DECIDE status: {sink_st} → {wanted_st}")
         if wanted_st == "play":
             music.play()
         else:
@@ -481,7 +514,7 @@ def _poll_music_from_db():
         emit_state(tag_for_api_log="poll/music")
 
 def _watch_sink_volume():
-    """Détecte les changements de volume OS (boutons tel, OS…) et réémet l'état immédiatement."""
+    """Détecte les changements locaux et réémet l'état immédiatement."""
     global _last_sink_volume
     st = music.get_state()
     v = st.get("volume")
@@ -492,7 +525,7 @@ def _watch_sink_volume():
         return
     if v != _last_sink_volume:
         print(f"👂 SINK change detected: { _last_sink_volume }% → { v }% (local)")
-        dev_state.set_music(st)  # pousse volume réel dans state
+        dev_state.set_music(st)
         _last_sink_volume = v
         emit_state(tag_for_api_log="sink/watch")
 
@@ -502,12 +535,10 @@ def loop():
     while _running:
         now = time.time()
 
-        # Heartbeat quand connecté
         if sio.connected and (now - last_hb) >= HEARTBEAT:
             last_hb = now
             post_heartbeat()
 
-        # *** POLL DB: TOUJOURS ACTIF, WS ou pas ***
         if (now - _last_music_poll) >= MUSIC_POLL_SEC:
             _last_music_poll = now
             try:
@@ -516,7 +547,6 @@ def loop():
             except Exception as e:
                 print("ℹ️ poll music fail:", e)
 
-        # Watch sink local
         if (now - _last_sink_check) >= SINK_WATCH_SEC:
             _last_sink_check = now
             try:
