@@ -4,122 +4,62 @@ import os
 import re
 import shutil
 import subprocess
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
+# État local minimal
 _state = {
     "status": "pause",   # "play" | "pause"
-    "volume": 40,        # 0..100 (reflète le volume "système" quand pactl est dispo)
+    "volume": 40,        # 0..100
     "track": None,
 }
 
-# --- helpers génériques ---
+# Pour ALSA fallback éventuel (peut servir selon ta carte)
+_ALSA_CARD_ENV = os.environ.get("AURA_ALSA_CARD")        # ex: "1"
+_ALSA_CTL_ENV  = os.environ.get("AURA_ALSA_CONTROL")     # ex: "PCM" | "Master" | "Speaker"
+
 _PCT = re.compile(r"(\d+)%")
 
-def _run(cmd: list[str]) -> tuple[int, str, str]:
+def _which(cmd: str) -> Optional[str]:
+    return shutil.which(cmd)
+
+def _run(cmd: List[str], env: Optional[dict]=None) -> tuple[int, str, str]:
     try:
-        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, text=True)
+        p = subprocess.run(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            check=False, text=True, env=env
+        )
         return p.returncode, p.stdout.strip(), p.stderr.strip()
     except Exception as e:
         return 1, "", str(e)
 
-def _which(binname: str) -> Optional[str]:
-    return shutil.which(binname)
+def _run_as_melvin(cmd: List[str]) -> tuple[int, str, str]:
+    """
+    Si on est root (uid 0), exécute la commande en tant que l'utilisateur 'melvin'
+    avec son environnement session (pactl/playerctl).
+    Sinon exécute normalement.
+    """
+    if os.geteuid() == 0:
+        # Prefer runuser (pas besoin de sudoers)
+        base = ["runuser", "-u", "melvin", "--"]
+        return _run(base + cmd, env=None)
+    else:
+        return _run(cmd, env=None)
 
-# ===================== PulseAudio / PipeWire (pactl) =====================
-
-def _pactl_available() -> bool:
-    return _which("pactl") is not None and bool(os.environ.get("XDG_RUNTIME_DIR"))
-
-def _pactl_default_sink() -> Optional[str]:
-    rc, out, _ = _run(["pactl", "get-default-sink"])
-    if rc != 0 or not out:
-        # fallback: list sinks short et prendre la 1re ligne
-        rc2, out2, _ = _run(["pactl", "list", "sinks", "short"])
-        if rc2 == 0 and out2:
-            line = out2.splitlines()[0]
-            parts = line.split()
-            return parts[1] if len(parts) >= 2 else None
-        return None
-    return out.strip()
-
+# --------- PULSE (pactl) ----------
 def _pactl_set_volume(pct: int) -> bool:
-    sink = _pactl_default_sink()
-    if not sink:
-        return False
     pct = max(0, min(100, int(pct)))
-    rc, _, _ = _run(["pactl", "set-sink-volume", sink, f"{pct}%"])
+    pc = _which("pactl")
+    if not pc:
+        return False
+    # @DEFAULT_SINK@ suffit, PipeWire route vers l’enceinte USB
+    rc, out, err = _run_as_melvin([pc, "set-sink-volume", "@DEFAULT_SINK@", f"{pct}%"])
     return rc == 0
 
 def _pactl_get_volume() -> Optional[int]:
-    sink = _pactl_default_sink()
-    if not sink:
+    pc = _which("pactl")
+    if not pc:
         return None
-    rc, out, _ = _run(["pactl", "get-sink-volume", sink])
-    if rc != 0 or not out:
-        return None
-    # Exemple: "Volume: front-left: 26869 /  41% / -23.23 dB, ..."
-    m = _PCT.search(out)
-    if not m:
-        return None
-    return max(0, min(100, int(m.group(1))))
-
-# ============================ ALSA (amixer) ==============================
-
-# Overrides possibles par env
-_ALSA_CARD_ENV = os.environ.get("AURA_ALSA_CARD")        # ex: "1"
-_ALSA_CTL_ENV  = os.environ.get("AURA_ALSA_CONTROL")     # ex: "PCM" | "Master"
-
-_detected_card: Optional[int] = None
-_detected_ctl: Optional[str] = None
-
-def _amixer_card_candidates() -> list[int]:
-    if _ALSA_CARD_ENV and _ALSA_CARD_ENV.isdigit():
-        return [int(_ALSA_CARD_ENV)]
-    # ta carte USB est card 1 (UACDemoV1.0)
-    return [1, 0, 2, 3, 4]
-
-def _amixer_try_controls(card: int) -> Optional[str]:
-    rc, out, _ = _run(["amixer", "-c", str(card), "scontrols"])
-    if rc != 0 or not out:
-        return None
-    names = []
-    for line in out.splitlines():
-        m = re.search(r"Simple mixer control '([^']+)'", line)
-        if m:
-            names.append(m.group(1))
-    for pref in ("PCM", "Master", "Speaker", "Headphone", "Digital"):
-        if pref in names:
-            return pref
-    return names[0] if names else None
-
-def _ensure_card_ctl():
-    global _detected_card, _detected_ctl
-    if _detected_card is not None and _detected_ctl is not None:
-        return
-    if _ALSA_CARD_ENV and _ALSA_CTL_ENV:
-        _detected_card = int(_ALSA_CARD_ENV)
-        _detected_ctl = _ALSA_CTL_ENV
-        return
-    for c in _amixer_card_candidates():
-        ctl = _ALSA_CTL_ENV or _amixer_try_controls(c)
-        if ctl:
-            _detected_card, _detected_ctl = c, ctl
-            return
-    _detected_card, _detected_ctl = 0, "Master"
-
-def _alsa_set_volume(pct: int) -> bool:
-    if not _which("amixer"):
-        return False
-    _ensure_card_ctl()
-    pct = max(0, min(100, int(pct)))
-    rc, _, _ = _run(["amixer", "-c", str(_detected_card), "sset", _detected_ctl, f"{pct}%", "-M"])
-    return rc == 0
-
-def _alsa_get_volume() -> Optional[int]:
-    if not _which("amixer"):
-        return None
-    _ensure_card_ctl()
-    rc, out, _ = _run(["amixer", "-c", str(_detected_card), "sget", _detected_ctl])
+    rc, out, err = _run_as_melvin([pc, "get-sink-volume", "@DEFAULT_SINK@"])
     if rc != 0 or not out:
         return None
     m = _PCT.search(out)
@@ -127,34 +67,32 @@ def _alsa_get_volume() -> Optional[int]:
         return None
     return max(0, min(100, int(m.group(1))))
 
-# ============================ Player controls ============================
-
-def _playerctl(cmd: list[str]) -> bool:
+# --------- playerctl (MPRIS) ----------
+def _playerctl(cmd: List[str]) -> bool:
     pc = _which("playerctl")
     if not pc:
         return False
-    rc, _, _ = _run([pc] + cmd)
+    rc, out, err = _run_as_melvin([pc] + cmd)
     return rc == 0
 
-# ============================== API publique =============================
+# ----------------- API publique -----------------
 
 def get_state() -> Dict[str, Any]:
-    # Priorité lecture via Pulse
-    v = _pactl_get_volume() if _pactl_available() else None
-    if v is None:
-        v = _alsa_get_volume()
+    v = _pactl_get_volume()
     if v is not None:
         _state["volume"] = v
     return dict(_state)
 
 def set_volume(value: int) -> Dict[str, Any]:
     value = max(0, min(100, int(value)))
-    ok = False
-    if _pactl_available():
-        ok = _pactl_set_volume(value)
-    if not ok:
-        ok = _alsa_set_volume(value)
-    # Relis systématiquement l’état réel après réglage
+    ok = _pactl_set_volume(value)
+    if ok:
+        _state["volume"] = value
+    else:
+        # on ne claque pas d'erreur, on reflète au mieux
+        cur = _pactl_get_volume()
+        if cur is not None:
+            _state["volume"] = cur
     return get_state()
 
 def play() -> Dict[str, Any]:
@@ -185,9 +123,11 @@ def apply(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
     if "volume" in payload:
         return set_volume(int(payload["volume"]))
+
     action = payload.get("action")
     if action == "play":  return play()
     if action == "pause": return pause()
     if action == "next":  return next_track()
     if action == "prev":  return prev_track()
+
     return get_state()
