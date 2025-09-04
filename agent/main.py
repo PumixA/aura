@@ -73,7 +73,11 @@ _last_report: Optional[Dict[str, Any]] = None
 _last_emit_ts: float = 0.0
 EMIT_THROTTLE_SEC = 0.25
 
-# ---------- Helpers: API snapshot logging ----------
+# --- DB polling (sécurité si aucun event WS n'arrive) ---
+_DB_POLL_SEC = 1.5
+_last_db_poll = 0.0
+_last_db_music: Optional[Dict[str, Any]] = None
+
 def _fetch_api_state() -> Optional[Dict[str, Any]]:
     url = f"{API_BASE}/devices/{DEVICE_ID}/state"
     try:
@@ -81,7 +85,7 @@ def _fetch_api_state() -> Optional[Dict[str, Any]]:
         if r.status_code == 200:
             return r.json()
         else:
-            print(f"ℹ️ API GET state non-200: {r.status_code} {r.text[:200]}")
+            print(f"ℹ️ API GET state non-200: {r.status_code} {r.text[:180]}")
     except Exception as e:
         print("ℹ️ API GET state échec:", e)
     return None
@@ -132,7 +136,6 @@ def emit_state(force: bool = False, *, tag_for_api_log: Optional[str] = None):
         sio.emit("state:report", payload, namespace=NS)
     except Exception as e:
         print("⚠️ state:report erreur:", e)
-    # Log côté API juste après (lecture REST)
     if tag_for_api_log:
         _log_api_state(tag_for_api_log)
 
@@ -215,22 +218,47 @@ def apply_snapshot(snapshot: Dict[str, Any], *, reason: str = "unknown"):
         print("⚠️ apply_snapshot:", e)
 
 def pull_snapshot_rest() -> bool:
-    url = f"{API_BASE}/devices/{DEVICE_ID}/state"
-    try:
-        r = requests.get(url, headers=_auth_headers(), timeout=5)
-        if r.status_code == 200:
-            data = r.json()
-            if isinstance(data, dict):
-                apply_snapshot(data, reason="REST")
-                print("✅ Snapshot REST appliqué.")
-                return True
-            else:
-                print("⚠️ Réponse snapshot non-dict:", type(data))
-        else:
-            print(f"ℹ️ Snapshot REST non autorisé/indispo ({r.status_code}).")
-    except Exception as e:
-        print("ℹ️ Snapshot REST échec:", e)
+    data = _fetch_api_state()
+    if isinstance(data, dict):
+        apply_snapshot(data, reason="REST")
+        print("✅ Snapshot REST appliqué.")
+        return True
     return False
+
+# --- Poll DB & apply deltas (musique) ---
+def poll_db_and_apply_if_changed(now: float):
+    global _last_db_poll, _last_db_music
+    if (now - _last_db_poll) < _DB_POLL_SEC:
+        return
+    _last_db_poll = now
+    data = _fetch_api_state()
+    if not isinstance(data, dict):
+        return
+    mdb = data.get("music")
+    if not isinstance(mdb, dict):
+        return
+    # 1) première fois → on seed sans spammer
+    if _last_db_music is None:
+        _last_db_music = dict(mdb)
+        return
+    # 2) compare volume / status
+    changed = False
+    prev = _last_db_music
+    vol_prev = prev.get("volume")
+    vol_new  = mdb.get("volume")
+    st_prev  = str(prev.get("status", "")).lower()
+    st_new   = str(mdb.get("status", "")).lower()
+    if vol_new is not None and vol_new != vol_prev:
+        print(f"🛰️ DB-poll: volume delta {vol_prev} → {vol_new}")
+        _apply_music_from_snapshot({"volume": vol_new}, source="DB-poll")
+        changed = True
+    if st_new in ("play", "pause") and st_new != st_prev:
+        print(f"🛰️ DB-poll: status delta {st_prev} → {st_new}")
+        _apply_music_from_snapshot({"status": st_new}, source="DB-poll")
+        changed = True
+    if changed:
+        _last_db_music = dict(mdb)
+        emit_state(tag_for_api_log="db-poll-apply")
 
 def _ack_ok(evt_type: str, data: Optional[Dict[str, Any]] = None):
     sio.emit("ack", {"deviceId": DEVICE_ID, "type": evt_type, "status": "ok", "data": data or {}}, namespace=NS)
@@ -342,7 +370,7 @@ def on_leds_style(payload):
         print("⚠️ LEDs style:", e)
         _ack_err("leds:style", str(e))
 
-# ---------- Music ----------
+# ---------- Music (toutes variantes probables) ----------
 @sio.on("music:volume", namespace=NS)
 def on_music_volume(payload):
     if payload.get("deviceId") not in (None, DEVICE_ID): return
@@ -392,7 +420,6 @@ def on_music_update(payload):
         print("⚠️ music:update:", e)
         _ack_err("music:update", str(e))
 
-# Variantes tolérantes
 @sio.on("music", namespace=NS)
 def on_music_generic(payload):
     if payload.get("deviceId") not in (None, DEVICE_ID): return
@@ -419,6 +446,31 @@ def on_control_volume(payload):
     except Exception as e:
         print("⚠️ control:volume:", e)
         _ack_err("control:volume", str(e))
+
+@sio.on("control", namespace=NS)
+def on_control(payload):
+    if payload.get("deviceId") not in (None, DEVICE_ID): return
+    # tolérant: accepte {action, volume/value} comme music
+    try:
+        data = payload.get("music", payload)
+        if "volume" in data or "value" in data:
+            _handle_volume_payload(data, source="control")
+        if "action" in data:
+            st = music.apply({"action": data["action"]})
+            dev_state.set_music(st)
+        _ack_ok("control")
+        emit_state(tag_for_api_log="control")
+    except Exception as e:
+        print("⚠️ control:", e)
+        _ack_err("control", str(e))
+
+@sio.on("control:update", namespace=NS)
+def on_control_update(payload):
+    on_control(payload)  # même traitement
+
+@sio.on("control:music", namespace=NS)
+def on_control_music(payload):
+    on_music_generic(payload)  # même traitement
 
 # ---------- Main loop ----------
 _running = True
@@ -447,6 +499,8 @@ def loop():
             last_hb = now
             post_heartbeat()
             emit_state(tag_for_api_log="heartbeat")
+        # Poll DB pour capter volume/status si aucun event ne vient
+        poll_db_and_apply_if_changed(now)
         time.sleep(0.2)
 
 def connect_forever():
