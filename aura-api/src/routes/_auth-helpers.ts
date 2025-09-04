@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyRequest } from 'fastify'
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import crypto from 'crypto'
 import bcrypt from 'bcrypt'
 
@@ -44,10 +44,53 @@ export function registerAuthHook(app: FastifyInstance) {
             throw app.httpErrors.unauthorized('Invalid or missing access token')
         }
     })
+
+    app.decorateRequest('agentDeviceId', null as string | null)
+
+    app.decorate('authenticateUserOrAgent', async function (
+        this: FastifyInstance,
+        request: FastifyRequest,
+        reply: FastifyReply
+    ) {
+        const auth = request.headers['authorization']
+        const xDeviceId = request.headers['x-device-id']
+
+        if (typeof auth === 'string' && auth.startsWith('ApiKey ')) {
+            if (!xDeviceId) {
+                throw app.httpErrors.unauthorized('Missing x-device-id')
+            }
+            const apiKey = auth.slice('ApiKey '.length).trim()
+            const deviceId = String(xDeviceId)
+
+            const device = await (app as any).prisma.device.findUnique({
+                where: { id: deviceId },
+                select: { id: true, apiKey: true, disabled: true },
+            })
+            if (!device || device.disabled || device.apiKey !== apiKey) {
+                throw app.httpErrors.unauthorized('Invalid device or ApiKey')
+            }
+
+            ;(request as any).agentDeviceId = deviceId
+            return
+        }
+
+        if (!auth || !auth.startsWith('Bearer ')) {
+            throw app.httpErrors.unauthorized('Invalid or missing access token')
+        }
+        try {
+            await request.jwtVerify()
+        } catch {
+            throw app.httpErrors.unauthorized('Invalid or expired token')
+        }
+    })
 }
 
 declare module 'fastify' {
     interface FastifyInstance {
         authenticate: (req: FastifyRequest) => Promise<void>
+        authenticateUserOrAgent: (req: FastifyRequest, rep: FastifyReply) => Promise<void>
+    }
+    interface FastifyRequest {
+        agentDeviceId: string | null
     }
 }
