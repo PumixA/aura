@@ -10,3 +10,4 @@ rpi_ws281x>=4.3.4
 
 # Outils (facultatif mais pratique)
 colorama>=0.4.6   # logs colorés
+pulsectl>=22.3.2
