@@ -1,27 +1,30 @@
-// electron/main.cjs
-const { app, BrowserWindow, ipcMain } = require('electron');
-const path = require('path');
+const { app, BrowserWindow } = require("electron");
+const path = require("path");
 
-const isDev = process.env.VITE_DEV === '1';
-let win;
-
-function createWindow () {
-    win = new BrowserWindow({
-        width: 1280, height: 800,
-        fullscreen: true,
-        frame: false,
-        backgroundColor: '#000000',
+function createWindow() {
+    const win = new BrowserWindow({
+        width: 800,
+        height: 600,
         webPreferences: {
-            preload: path.join(__dirname, 'preload.cjs'),
-            nodeIntegration: false,
-            contextIsolation: true,
-        }
+            preload: path.join(__dirname, "preload.cjs"),
+        },
     });
 
-    if (isDev) win.loadURL('http://localhost:5173');
-    else win.loadFile(path.join(__dirname, '../dist/index.html'));
+    // En dev → charge le serveur Vite
+    if (process.env.VITE_DEV_SERVER_URL) {
+        win.loadURL(process.env.VITE_DEV_SERVER_URL);
+    } else {
+        // En prod → charge le build dist
+        win.loadFile(path.join(__dirname, "../dist/index.html"));
+    }
 }
 
 app.whenReady().then(createWindow);
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-ipcMain.handle('app:quit', () => app.quit());
+
+app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") app.quit();
+});
+
+app.on("activate", () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+});

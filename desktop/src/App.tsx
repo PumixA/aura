@@ -1,11 +1,9 @@
-import { useState } from 'react';
-import Login from './pages/Login';
-import Dashboard from './pages/Dashboard';
-import { useAuth } from './store/auth';
+import React from "react";
 
-export default function App(){
-    const user = useAuth(s=>s.user);
-    const [route, setRoute] = useState(user ? 'dash' : 'login');
-    if (route==='login') return <Login onSuccess={()=>setRoute('dash')} />;
-    return <Dashboard />;
+export default function App() {
+    return (
+        <div style={{ display: "flex", height: "100vh", alignItems: "center", justifyContent: "center", fontSize: "24px" }}>
+            <h1>Bienvenue sur Aura Desktop 👋</h1>
+        </div>
+    );
 }
