@@ -1,11 +1,9 @@
-import { useState } from 'react';
-import Login from './pages/Login';
-import Dashboard from './pages/Dashboard';
-import { useAuth } from './store/auth';
+// src/App.tsx
+import React from "react";
+import Dashboard from "./pages/Dashboard";
+import "./App.css";
+import "./index.css";
 
-export default function App(){
-    const user = useAuth(s=>s.user);
-    const [route, setRoute] = useState(user ? 'dash' : 'login');
-    if (route==='login') return <Login onSuccess={()=>setRoute('dash')} />;
+export default function App() {
     return <Dashboard />;
 }

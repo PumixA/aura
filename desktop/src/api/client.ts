@@ -1,14 +1,35 @@
-import axios from 'axios';
+// src/api/client.ts
+import axios from "axios";
 
-const API_URL = (window as any).aura?.env?.API_URL || import.meta.env.VITE_API_URL;
+const {
+    VITE_API_URL,
+    VITE_DEVICE_ID,
+    VITE_API_KEY,
+} = import.meta.env;
 
-export const api = axios.create({ baseURL: API_URL, timeout: 10000 });
+if (!VITE_API_URL || !VITE_DEVICE_ID || !VITE_API_KEY) {
+    console.error("Config manquante: VITE_API_URL / VITE_DEVICE_ID / VITE_API_KEY");
+}
 
-let accessToken: string | null = null;
-export const setToken = (t: string | null) => { accessToken = t; };
-export const getToken = () => accessToken;
+export const API_BASE = `${VITE_API_URL}/api/v1`;
+export const DEVICE_ID = String(VITE_DEVICE_ID);
+const API_KEY = String(VITE_API_KEY);
 
-api.interceptors.request.use((cfg) => {
-    if (accessToken) cfg.headers.Authorization = `Bearer ${accessToken}`;
-    return cfg;
+export const api = axios.create({
+    baseURL: API_BASE,
+    timeout: 5000,
+    headers: {
+        "Authorization": `ApiKey ${API_KEY}`,
+        "x-device-id": DEVICE_ID,
+        "Content-Type": "application/json",
+    },
 });
+
+// Petit helper de log
+api.interceptors.response.use(
+    (res) => res,
+    (err) => {
+        console.error("API error:", err?.response?.status, err?.response?.data || err.message);
+        return Promise.reject(err);
+    }
+);

@@ -1,40 +1,68 @@
-import { useEffect, useState } from 'react';
-import { api } from '../api/client';
-import { useUI } from '../store/ui';
-import { joinDeviceRoom } from '../socket';
+// src/components/MusicPanel.tsx
+import React, { useState, useEffect } from "react";
+import type { MusicState } from "../api/device";
+import { musicCmd, musicSetVolume } from "../api/device";
 
-export default function MusicPanel(){
-    const deviceId = useUI(s=>s.deviceId);
-    const music = useUI(s=>s.music);
+type Props = {
+    music: MusicState;
+    onRefresh: () => void;
+};
+
+export default function MusicPanel({ music, onRefresh }: Props) {
+    const [busy, setBusy] = useState(false);
     const [vol, setVol] = useState(music.volume);
 
-    useEffect(()=>{ setVol(music.volume); }, [music]);
-    useEffect(()=>{ if (deviceId) joinDeviceRoom(deviceId); }, [deviceId]);
+    useEffect(() => setVol(music.volume), [music.volume]);
 
-    const cmd = async (c:'play'|'pause'|'next'|'prev')=>{
-        if(!deviceId) return;
-        await api.post(`/api/v1/devices/${deviceId}/music/cmd`, { cmd:c });
-    };
-    const setVolume = async ()=>{
-        if(!deviceId) return;
-        await api.post(`/api/v1/devices/${deviceId}/music/cmd`, { volume: vol });
-    };
+    async function setVolume(v: number) {
+        setVol(v);
+        setBusy(true);
+        try {
+            await musicSetVolume(v);
+            onRefresh();
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    async function doAction(action: "play"|"pause"|"next"|"prev") {
+        setBusy(true);
+        try {
+            await musicCmd(action);
+            onRefresh();
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    const isPlaying = music.status === "play";
 
     return (
-        <div style={card}>
-            <h3>Musique</h3>
-            <div style={{display:'flex', gap:8, flexWrap:'wrap'}}>
-                <button style={btn} onClick={()=>cmd('prev')}>⏮️</button>
-                <button style={btn} onClick={()=>cmd('play')}>▶️</button>
-                <button style={btn} onClick={()=>cmd('pause')}>⏸️</button>
-                <button style={btn} onClick={()=>cmd('next')}>⏭️</button>
+        <div className="card">
+            <div className="card-head">
+                <h2>Musique</h2>
+                <div className="row gap">
+                    <button className="btn" disabled={busy} onClick={() => doAction("prev")} title="Piste précédente">⏮</button>
+                    <button className="btn" disabled={busy} onClick={() => doAction(isPlaying ? "pause" : "play")} title={isPlaying ? "Pause" : "Lecture"}>
+                        {isPlaying ? "⏸" : "▶️"}
+                    </button>
+                    <button className="btn" disabled={busy} onClick={() => doAction("next")} title="Piste suivante">⏭</button>
+                </div>
             </div>
-            <div style={{marginTop:8}}>
-                <input type="range" min={0} max={100} value={vol} onChange={e=>setVol(parseInt(e.target.value))} onMouseUp={setVolume} onTouchEnd={setVolume}/>
-                <span style={{marginLeft:8}}>{vol}%</span>
+
+            <div className="row">
+                <label>Volume</label>
+                <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={vol}
+                    onChange={(e) => setVolume(Number(e.target.value))}
+                    disabled={busy}
+                    style={{ flex: 1 }}
+                />
+                <span className="mono">{vol}%</span>
             </div>
         </div>
     );
 }
-const card = { background:'rgba(255,255,255,0.06)', padding:16, borderRadius:16 } as const;
-const btn  = { padding:'8px 12px', borderRadius:12, border:0, background:'#374151', color:'#fff', cursor:'pointer' } as const;

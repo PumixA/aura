@@ -1,27 +1,41 @@
-// electron/main.cjs
-const { app, BrowserWindow, ipcMain } = require('electron');
-const path = require('path');
+const { app, BrowserWindow } = require("electron");
+const path = require("path");
 
-const isDev = process.env.VITE_DEV === '1';
 let win;
 
-function createWindow () {
+function createWindow() {
     win = new BrowserWindow({
-        width: 1280, height: 800,
-        fullscreen: true,
-        frame: false,
-        backgroundColor: '#000000',
+        width: 1920,
+        height: 1080,
+        fullscreen: true,              // ⬅️ direct plein écran
+        autoHideMenuBar: true,         // ⬅️ masque la barre de menu
         webPreferences: {
-            preload: path.join(__dirname, 'preload.cjs'),
+            preload: path.join(__dirname, "preload.cjs"),
             nodeIntegration: false,
             contextIsolation: true,
-        }
+        },
     });
 
-    if (isDev) win.loadURL('http://localhost:5173');
-    else win.loadFile(path.join(__dirname, '../dist/index.html'));
+    const devServer = process.env.VITE_DEV_SERVER_URL;
+
+    if (devServer) {
+        win.loadURL(devServer);
+        win.webContents.openDevTools(); // facultatif en dev
+    } else {
+        win.loadFile(path.join(__dirname, "../dist/index.html"));
+    }
+
+    win.on("closed", () => {
+        win = null;
+    });
 }
 
-app.whenReady().then(createWindow);
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-ipcMain.handle('app:quit', () => app.quit());
+app.on("ready", createWindow);
+
+app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") app.quit();
+});
+
+app.on("activate", () => {
+    if (win === null) createWindow();
+});

@@ -1,10 +1,8 @@
-// electron/preload.cjs
-const { contextBridge, ipcRenderer } = require('electron');
+// Preload minimal, sans 'fs' ni 'path'.
+// On expose juste un namespace vide pour éviter window.electron === undefined.
+// (Toute la config sera lue via import.meta.env côté React.)
+const { contextBridge } = require('electron');
 
-contextBridge.exposeInMainWorld('aura', {
-    quit: () => ipcRenderer.invoke('app:quit'),
-    env: {
-        API_URL: process.env.VITE_API_URL || '',
-        DEV: process.env.VITE_DEV === '1'
-    }
+contextBridge.exposeInMainWorld('electron', {
+    ping: () => 'pong',
 });
