@@ -1,6 +1,8 @@
-api_url: "http://127.0.0.1:3000"  # ou 192.168.1.96 si l'agent est sur une autre machine
+api_url: "http://192.168.1.96:3000"
 ws_path: "/socket.io"
 namespace: "/agent"
 device_id: "89e81262-2101-4f6a-9969-40b81a18d929"
 api_key: "yDJNMXSdjbeTeChF8ITPyGdd37s2K9R8"
-heartbeat_sec: 20
+heartbeat_sec: 3
+music_poll_sec: 1        # ← rends le poll plus nerveux
+sink_watch_sec: 0.3

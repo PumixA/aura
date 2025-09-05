@@ -1,6 +1,7 @@
-// This is a shim for web and Android where the tab bar is generally opaque.
-export default undefined;
+// components/ui/TabBarBackground.tsx
+// Neutralise tout fond de TabBar côté Android/Web.
+// On ne peint rien (retourne null) pour éviter le "gros rectangle" plein largeur.
 
-export function useBottomTabOverflow() {
-  return 0;
+export default function TabBarBackground() {
+    return null;
 }

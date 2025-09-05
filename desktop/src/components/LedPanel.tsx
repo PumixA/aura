@@ -1,34 +1,93 @@
-import { useState, useEffect } from 'react';
-import { api } from '../api/client';
-import { useUI } from '../store/ui';
-import { joinDeviceRoom } from '../socket';
+import React, { useState } from "react";
+import { clsx } from "clsx";
+import type { LedState } from "../api/device";
+import { ledsSetPower, ledsSetStyle } from "../api/device";
 
-export default function LedPanel(){
-    const deviceId = useUI(s=>s.deviceId);
-    const leds = useUI(s=>s.leds);
-    const [on, setOn] = useState(leds.on);
-    const [color, setColor] = useState(leds.color);
-    const [brightness, setBrightness] = useState(leds.brightness);
+type Props = {
+    leds: LedState;
+    onRefresh: () => void;
+};
 
-    useEffect(()=>{ setOn(leds.on); setColor(leds.color); setBrightness(leds.brightness); }, [leds]);
-    useEffect(()=>{ if (deviceId) joinDeviceRoom(deviceId); }, [deviceId]);
+export default function LedPanel({ leds, onRefresh }: Props) {
+    const [busy, setBusy] = useState(false);
+    const [local, setLocal] = useState<LedState>(leds);
 
-    const send = async () => {
-        if (!deviceId) return;
-        await api.post(`/api/v1/devices/${deviceId}/leds/state`, { on, color, brightness });
-    };
+    React.useEffect(() => setLocal(leds), [leds]);
+
+    async function togglePower() {
+        try {
+            setBusy(true);
+            await ledsSetPower(!local.on);
+            onRefresh();
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    async function changeColor(e: React.ChangeEvent<HTMLInputElement>) {
+        const color = e.target.value.toUpperCase();
+        setLocal((prev) => ({ ...prev, color }));
+        try {
+            setBusy(true);
+            await ledsSetStyle({ color });
+            onRefresh();
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    async function changeBrightness(e: React.ChangeEvent<HTMLInputElement>) {
+        const brightness = Number(e.target.value);
+        setLocal((prev) => ({ ...prev, brightness }));
+        try {
+            setBusy(true);
+            await ledsSetStyle({ brightness });
+            onRefresh();
+        } finally {
+            setBusy(false);
+        }
+    }
 
     return (
-        <div style={card}>
-            <h3>LEDs</h3>
-            <label><input type="checkbox" checked={on} onChange={e=>setOn(e.target.checked)}/> ON</label>
-            <div style={{marginTop:8}}>
-                <input type="color" value={color} onChange={e=>setColor(e.target.value)} />
-                <input type="range" min={0} max={100} value={brightness} onChange={e=>setBrightness(parseInt(e.target.value))} />
+        <div className="card">
+            <div className="card-head">
+                <h2>Éclairage</h2>
+                <button
+                    className={clsx("btn", local.on ? "btn-on" : "btn-off")}
+                    disabled={busy}
+                    onClick={togglePower}
+                    title={local.on ? "Éteindre" : "Allumer"}
+                >
+                    {local.on ? "ON" : "OFF"}
+                </button>
             </div>
-            <button style={btn} onClick={send}>Appliquer</button>
+
+            <div className="row">
+                <label>Couleur</label>
+                <input
+                    type="color"
+                    value={local.color || "#FFFFFF"}
+                    onChange={changeColor}
+                    disabled={busy || !local.on}
+                    style={{ width: 48, height: 32, border: "none", background: "transparent" }}
+                />
+                <code style={{ opacity: 0.7, marginLeft: 8 }}>{local.color}</code>
+            </div>
+
+            <div className="row">
+                <label>Intensité</label>
+                <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={local.brightness ?? 0}
+                    onChange={changeBrightness}
+                    disabled={busy || !local.on}
+                    style={{ flex: 1 }}
+                />
+                <span className="mono">{local.brightness}%</span>
+            </div>
         </div>
     );
 }
-const card = { background:'rgba(255,255,255,0.06)', padding:16, borderRadius:16 } as const;
-const btn  = { marginTop:8, padding:'8px 12px', borderRadius:12, border:0, background:'#2563eb', color:'#fff', cursor:'pointer' } as const;

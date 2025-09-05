@@ -15,6 +15,7 @@ model User {
   lastName     String?
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
+  role         String     @default("user")
   prefs        UserPrefs?
   devices      Device[]
   sessions     Session[]
@@ -32,11 +33,11 @@ model UserPrefs {
 
 model Device {
   id        String      @id @default(uuid())
-  ownerId   String
+  ownerId   String?
   name      String
   pairedAt  DateTime?
   createdAt DateTime    @default(now())
-  owner     User        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  owner     User?        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   pairing   DevicePairingToken?
   led       LedState?
   music     MusicState?
@@ -44,6 +45,7 @@ model Device {
   audits    Audit[]
   apiKeyHash  String?
   disabled    Boolean   @default(false)
+  lastSeenAt  DateTime?
   @@index([ownerId])
 }
 
@@ -51,6 +53,7 @@ model DevicePairingToken {
   deviceId  String   @id
   token     String   @unique
   expiresAt DateTime
+  transfer  Boolean  @default(false)
   device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
   @@index([expiresAt])
 }

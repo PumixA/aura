@@ -1,57 +1,123 @@
-import { create } from 'zustand'
-import * as SecureStore from 'expo-secure-store'
-import { api } from '../api/client'
+import { create } from 'zustand';
+import { api } from '../api/client';
+import {
+    loadTokens,
+    saveTokens,
+    clearTokens,
+    getAccessTokenSync,
+} from '../lib/token';
+import { registerAccessTokenListener } from '../api/authBridge';
 
-type User = { id: string; email: string; firstName?: string; lastName?: string }
-type AuthState = {
-    user: User | null
-    loading: boolean
-    login: (email: string, password: string) => Promise<void>
-    register: (p: { email: string; password: string; firstName?: string; lastName?: string }) => Promise<void>
-    logout: () => Promise<void>
-    hydrate: () => Promise<void>
+
+export type User = {
+    id: string;
+    email: string;
+    firstName?: string | null;
+    lastName?: string | null;
+};
+
+interface AuthState {
+    user: User | null;
+    accessToken: string | null;
+
+    loading: boolean;
+    initialized: boolean;
+
+    init: () => Promise<void>;
+    login: (email: string, password: string) => Promise<void>;
+    register: (payload: {
+        email: string;
+        password: string;
+        firstName?: string;
+        lastName?: string;
+    }) => Promise<void>;
+    fetchMe: () => Promise<void>;
+    updateMe: (payload: { firstName?: string; lastName?: string }) => Promise<void>;
+    logout: () => Promise<void>;
 }
 
-export const useAuth = create<AuthState>((set) => ({
+
+export const useAuth = create<AuthState>((set, get) => ({
     user: null,
+    accessToken: null,
+
     loading: false,
-    hydrate: async () => {
-        set({ loading: true })
+    initialized: false,
+
+    init: async () => {
+        set({ loading: true });
         try {
-            const { data } = await api.get('/me')
-            set({ user: data })
-        } catch {
-            set({ user: null })
+            await loadTokens();
+            const at = getAccessTokenSync();
+            if (at) set({ accessToken: at });
+            try {
+                await get().fetchMe();
+            } catch {
+            }
         } finally {
-            set({ loading: false })
+            set({ loading: false, initialized: true });
         }
     },
+
     login: async (email, password) => {
-        set({ loading: true })
+        set({ loading: true });
         try {
-            const { data } = await api.post('/auth/login', { email, password })
-            await SecureStore.setItemAsync('access_token', data.accessToken)
-            await SecureStore.setItemAsync('refresh_token', data.refreshToken ?? '')
-            const me = await api.get('/me')
-            set({ user: me.data })
+            const { data } = await api.post('/auth/login', { email, password });
+            const { tokens, user } = data || {};
+            if (tokens?.accessToken && tokens?.refreshToken) {
+                await saveTokens(tokens);
+                set({ accessToken: tokens.accessToken, user: user ?? null });
+            }
+            await get().fetchMe().catch(() => {});
         } finally {
-            set({ loading: false })
+            set({ loading: false });
         }
     },
+
     register: async (payload) => {
-        set({ loading: true })
+        set({ loading: true });
         try {
-            await api.post('/auth/register', payload)
+            const { data } = await api.post('/auth/register', payload);
+            const { tokens, user } = data || {};
+            if (tokens?.accessToken && tokens?.refreshToken) {
+                await saveTokens(tokens);
+                set({ accessToken: tokens.accessToken, user: user ?? null });
+            }
+            await get().fetchMe().catch(() => {});
         } finally {
-            set({ loading: false })
+            set({ loading: false });
         }
     },
+
+    fetchMe: async () => {
+        const { data } = await api.get('/me');
+        set({ user: data?.user ?? null });
+    },
+
+    updateMe: async (payload) => {
+        set({ loading: true });
+        try {
+            const { data } = await api.put('/me', payload);
+            set({ user: data?.user ?? null });
+        } finally {
+            set({ loading: false });
+        }
+    },
+
     logout: async () => {
         try {
-            await api.post('/auth/logout')
-        } catch {}
-        await SecureStore.deleteItemAsync('access_token')
-        await SecureStore.deleteItemAsync('refresh_token')
-        set({ user: null })
+            const tokens = await loadTokens();
+            const rt = tokens?.refreshToken;
+            if (rt) {
+                await api.post('/auth/logout', { refreshToken: rt }).catch(() => {});
+            }
+        } finally {
+            await clearTokens();
+            set({ user: null, accessToken: null });
+        }
     },
-}))
+}));
+
+registerAccessTokenListener((token) => {
+    useAuth.setState({ accessToken: token });
+});

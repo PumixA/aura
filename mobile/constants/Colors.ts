@@ -1,26 +1,115 @@
-/**
- * Below are the colors that are used in the app. The colors are defined in the light and dark mode.
- * There are many other ways to style your app. For example, [Nativewind](https://www.nativewind.dev/), [Tamagui](https://tamagui.dev/), [unistyles](https://reactnativeunistyles.vercel.app), etc.
- */
+export type ThemeName = 'light' | 'dark';
 
-const tintColorLight = '#0a7ea4';
-const tintColorDark = '#fff';
+export const Palette = {
+    brandViolet: '#7A5AF8',
+    brandCyan:   '#4DA8F0',
+    brandPink:   '#FF6EC7',
+
+    green:  '#10B981',
+    greenSoft: '#34D399',
+    red:    '#DC2626',
+    redSoft:'#F87171',
+
+    white:  '#FFFFFF',
+    black:  '#000000',
+    grey100:'#F5F7FB',
+    grey200:'#E7EAF2',
+    grey300:'#C7CBD6',
+    grey700:'#323544',
+    grey800:'#191B25',
+    grey900:'#0F1222',
+};
+
+export const Gradients = {
+    primary: [Palette.brandViolet, Palette.brandCyan],
+    background: [Palette.grey900, '#161A2F'],
+    online: ['rgba(52,211,153,0.35)', 'rgba(16,185,129,0.35)'],
+    offline: ['rgba(248,113,113,0.35)', 'rgba(220,38,38,0.35)'],
+};
+
+export const Radii = {
+    sm: 10,
+    md: 14,
+    lg: 18,
+    xl: 22,
+    xxl: 28,
+    pill: 999,
+};
+
+export const Spacing = {
+    xs: 6,
+    sm: 10,
+    md: 14,
+    lg: 18,
+    xl: 22,
+};
+
+export const Shadows = {
+    light: {
+        shadowColor: '#000',
+        shadowOpacity: 0.1,
+        shadowRadius: 30,
+        shadowOffset: { width: 0, height: 4 },
+        elevation: 6,
+    },
+    dark: {
+        shadowColor: '#000',
+        shadowOpacity: 0.28,
+        shadowRadius: 30,
+        shadowOffset: { width: 0, height: 6 },
+        elevation: 10,
+    },
+};
+
+export function getTheme(name: ThemeName) {
+    if (name === 'dark') {
+        return {
+            name,
+            background: Palette.grey900,
+            surface: 'rgba(255,255,255,0.10)',
+            surfaceStrong: 'rgba(255,255,255,0.14)',
+            border: 'rgba(255,255,255,0.22)',
+            text: 'rgba(255,255,255,0.92)',
+            textMuted: 'rgba(255,255,255,0.62)',
+            divider: 'rgba(255,255,255,0.08)',
+        };
+    }
+    return {
+        name,
+        background: Palette.grey100,
+        surface: 'rgba(255,255,255,0.40)',
+        surfaceStrong: 'rgba(255,255,255,0.55)',
+        border: 'rgba(0,0,0,0.08)',
+        text: 'rgba(0,0,0,0.92)',
+        textMuted: 'rgba(0,0,0,0.60)',
+        divider: 'rgba(0,0,0,0.06)',
+    };
+}
 
 export const Colors = {
-  light: {
-    text: '#11181C',
-    background: '#fff',
-    tint: tintColorLight,
-    icon: '#687076',
-    tabIconDefault: '#687076',
-    tabIconSelected: tintColorLight,
-  },
-  dark: {
-    text: '#ECEDEE',
-    background: '#151718',
-    tint: tintColorDark,
-    icon: '#9BA1A6',
-    tabIconDefault: '#9BA1A6',
-    tabIconSelected: tintColorDark,
-  },
+    background: Palette.grey900,
+    text: {
+        primary: 'rgba(255,255,255,0.92)',
+        muted:   'rgba(255,255,255,0.62)',
+    },
+    primary: {
+        solid: Palette.brandViolet,
+        from:  Palette.brandViolet,
+        to:    Palette.brandCyan,
+    },
+    glass: {
+        card: 'rgba(255,255,255,0.10)',
+        border: 'rgba(255,255,255,0.22)',
+    },
+    status: {
+        onlineBg: 'rgba(16,185,129,0.18)',
+        onlineText: '#16A34A',
+        offlineBg: 'rgba(220,38,38,0.18)',
+        offlineText: '#DC2626',
+    },
+    feedback: {
+        error: Palette.red,
+    },
 };
+
+export default Colors;

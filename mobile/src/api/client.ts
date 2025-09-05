@@ -1,62 +1,73 @@
-import axios from 'axios'
-import * as SecureStore from 'expo-secure-store'
+import axios, { AxiosError } from 'axios';
+import { API_BASE } from '../lib/env';
+import {
+    loadTokens, saveTokens, clearTokens,
+    getAccessTokenSync, getRefreshTokenSync, setAccessTokenSync,
+} from '../lib/token';
+import { emitAccessToken } from './authBridge';
 
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL
+export const api = axios.create({ baseURL: API_BASE, timeout: 12000 });
 
-export const api = axios.create({
-    baseURL: BASE_URL,
-    timeout: 10000,
-})
+let refreshing: Promise<string | null> | null = null;
 
-async function getAccessToken() {
-    return await SecureStore.getItemAsync('access_token')
-}
-
-async function getRefreshToken() {
-    return await SecureStore.getItemAsync('refresh_token')
-}
+async function ensureTokensLoaded() { await loadTokens(); }
+ensureTokensLoaded();
 
 api.interceptors.request.use(async (config) => {
-    const token = await getAccessToken()
-    if (token) config.headers.Authorization = `Bearer ${token}`
-    return config
-})
-
-let isRefreshing = false
-let queue: Array<(t: string | null) => void> = []
+    const at = getAccessTokenSync();
+    if (at) {
+        config.headers = config.headers ?? {};
+        (config.headers as any).Authorization = `Bearer ${at}`;
+    }
+    return config;
+});
 
 api.interceptors.response.use(
     (res) => res,
-    async (error) => {
-        const original = error.config
-        if (error.response?.status === 401 && !original._retry) {
-            original._retry = true
-            if (!isRefreshing) {
-                isRefreshing = true
-                try {
-                    const rt = await getRefreshToken()
-                    if (!rt) throw new Error('No refresh token')
-                    const { data } = await axios.post(`${BASE_URL}/auth/refresh`, { refreshToken: rt })
-                    await SecureStore.setItemAsync('access_token', data.accessToken)
-                    queue.forEach((cb) => cb(data.accessToken))
-                } catch (e) {
-                    queue.forEach((cb) => cb(null))
-                } finally {
-                    queue = []
-                    isRefreshing = false
+    async (error: AxiosError) => {
+        const original = error.config as any;
+        if (error.response?.status === 401 && !original?._retry) {
+            original._retry = true;
+
+            if (!refreshing) {
+                const rt = getRefreshTokenSync();
+                if (!rt) {
+                    await clearTokens();
+                    emitAccessToken(null);
+                    return Promise.reject(error);
                 }
-            }
-            return new Promise((resolve, reject) => {
-                queue.push(async (newToken) => {
-                    if (newToken) {
-                        original.headers.Authorization = `Bearer ${newToken}`
-                        resolve(api.request(original))
-                    } else {
-                        reject(error)
+                refreshing = (async () => {
+                    try {
+                        const resp = await axios.post(`${API_BASE}/auth/refresh`, { refreshToken: rt }, { timeout: 12000 });
+                        const tokens = resp.data?.tokens as { accessToken: string; refreshToken: string };
+                        if (tokens?.accessToken && tokens?.refreshToken) {
+                            setAccessTokenSync(tokens.accessToken);
+                            await saveTokens(tokens);
+                            emitAccessToken(tokens.accessToken);
+                            return tokens.accessToken;
+                        }
+                        await clearTokens();
+                        emitAccessToken(null);
+                        return null;
+                    } catch {
+                        await clearTokens();
+                        emitAccessToken(null);
+                        return null;
+                    } finally {
+                        refreshing = null;
                     }
-                })
-            })
+                })();
+            }
+
+            const newAccess = await refreshing;
+            if (newAccess) {
+                original.headers = original.headers ?? {};
+                original.headers.Authorization = `Bearer ${newAccess}`;
+                return api.request(original);
+            }
         }
-        return Promise.reject(error)
+        return Promise.reject(error);
     }
-)
+);
+
+export type ApiResult<T> = { data: T };
