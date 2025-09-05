@@ -1,6 +1,3 @@
-/* ------------------------------
-   Reset + base
---------------------------------*/
 *,
 *::before,
 *::after {
@@ -35,16 +32,12 @@ body {
     -moz-osx-font-smoothing: grayscale;
 }
 
-/* Links in subtitles */
 a {
     color: var(--accent);
     text-decoration: none;
 }
 a:hover { text-decoration: underline; }
 
-/* ------------------------------
-   Generic UI elements
---------------------------------*/
 .container {
     max-width: 1080px;
     margin: 28px auto;
@@ -148,7 +141,6 @@ h1 {
     line-height: 1.45;
 }
 
-/* Small status pill (used by OwnerPanel & header online state) */
 .pill {
     display: inline-flex;
     align-items: center;
@@ -161,7 +153,6 @@ h1 {
     color: var(--text);
 }
 
-/* Inputs: make them consistent with the dark theme */
 input[type="text"],
 input[type="email"],
 input[type="number"] {
@@ -175,14 +166,12 @@ input[type="number"] {
 }
 input::placeholder { color: var(--muted); }
 
-/* Buttons variants */
 .btn-primary {
     background: linear-gradient(180deg, #2a72ff, #1e56c9);
     border: 1px solid rgba(66,153,255,.35);
 }
 .btn-primary:hover { filter: brightness(1.05); }
 
-/* Range input (volume/brightness) */
 input[type="range"] {
     width: 100%;
     -webkit-appearance: none;
@@ -214,7 +203,6 @@ input[type="range"]::-moz-range-thumb {
     border: none;
 }
 
-/* Simple icon button in cards (e.g. play/pause in MusicPanel) */
 .icon-btn {
     display: inline-flex;
     align-items: center;
@@ -228,7 +216,6 @@ input[type="range"]::-moz-range-thumb {
 }
 .icon-btn:hover { background: rgba(255,255,255,0.08); }
 
-/* Subtle label/row layout helpers */
 .row {
     display: flex;
     align-items: center;

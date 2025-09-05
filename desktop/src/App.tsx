@@ -1,5 +1,5 @@
 import React from "react";
-import "./App.css";     // <-- indispensable
+import "./App.css";
 
 import Dashboard from "./pages/Dashboard";
 

@@ -33,11 +33,11 @@ model UserPrefs {
 
 model Device {
   id        String      @id @default(uuid())
-  ownerId   String
+  ownerId   String?
   name      String
   pairedAt  DateTime?
   createdAt DateTime    @default(now())
-  owner     User        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  owner     User?        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   pairing   DevicePairingToken?
   led       LedState?
   music     MusicState?
@@ -53,6 +53,7 @@ model DevicePairingToken {
   deviceId  String   @id
   token     String   @unique
   expiresAt DateTime
+  transfer  Boolean  @default(false)
   device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
   @@index([expiresAt])
 }

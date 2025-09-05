@@ -1,4 +1,3 @@
-// src/components/MusicPanel.tsx
 import React, { useState, useEffect } from "react";
 import type { MusicState } from "../api/device";
 import { musicCmd, musicSetVolume } from "../api/device";

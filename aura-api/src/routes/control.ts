@@ -2,11 +2,9 @@ import type { FastifyPluginAsync } from "fastify";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 
-// ───────── Schemas
 const colorHex = z.string().regex(/^#[0-9A-Fa-f]{6}$/);
 const ledStateSchema = z.object({ on: z.boolean() });
 
-// preset peut être null → "aucun"
 const ledStyleSchema = z.object({
     color: colorHex.optional(),
     brightness: z.number().int().min(0).max(100).optional(),
@@ -19,7 +17,6 @@ const ledStyleSchema = z.object({
 const musicCmdSchema = z.object({ action: z.enum(["play", "pause", "next", "prev"]) });
 const musicVolumeSchema = z.object({ value: z.number().int().min(0).max(100) });
 
-// ───────── Helpers d'auth & WS (même logique que devices.ts)
 function isAgentRequest(req: any) {
     const auth = req.headers["authorization"];
     const did = req.headers["x-device-id"];
@@ -98,13 +95,11 @@ async function getMusicSnapshot(appAny: any, deviceId: string) {
         : { status: "pause" as const, volume: 50, track: null };
 }
 
-// ───────── Plugin
 const control: FastifyPluginAsync = async (app) => {
     // LEDs: on/off
     app.post("/devices/:id/leds/state", async (req: any, rep) => {
         const deviceId = req.params.id as string;
 
-        // Auth: ApiKey (agent/desktop) OU JWT (user)
         let userId: string | null = null;
         if (isAgentRequest(req)) {
             await verifyAgentApiKey(app, req, deviceId);
@@ -129,10 +124,8 @@ const control: FastifyPluginAsync = async (app) => {
             }
         });
 
-        // Vers agent → bon event spécifique
         emitToAgent(app, deviceId, "leds:state", { on: body.on });
 
-        // Rafraîchit les UIs
         const leds = await getLedSnapshot(app, deviceId);
         emitStateToUIs(app, deviceId, { leds });
 
@@ -140,7 +133,6 @@ const control: FastifyPluginAsync = async (app) => {
         return rep.code(202).send({ accepted: true });
     });
 
-    // LEDs: style (color/brightness/preset)
     app.post("/devices/:id/leds/style", async (req: any, rep) => {
         const deviceId = req.params.id as string;
 
@@ -160,8 +152,7 @@ const control: FastifyPluginAsync = async (app) => {
             const update: any = {};
             if (typeof body.color !== "undefined") update.color = body.color.toUpperCase();
             if (typeof body.brightness !== "undefined") update.brightness = body.brightness;
-            if ("preset" in body) update.preset = body.preset; // string ou null
-            // UX courante : style ⇒ allume
+            if ("preset" in body) update.preset = body.preset;
             update.on = true;
 
             await px.ledState.upsert({
@@ -183,10 +174,8 @@ const control: FastifyPluginAsync = async (app) => {
             }
         });
 
-        // Vers agent → event dédié
         emitToAgent(app, deviceId, "leds:style", { ...body });
 
-        // Rafraîchit les UIs
         const leds = await getLedSnapshot(app, deviceId);
         emitStateToUIs(app, deviceId, { leds });
 
@@ -194,7 +183,6 @@ const control: FastifyPluginAsync = async (app) => {
         return rep.code(202).send({ accepted: true });
     });
 
-    // Music: volume
     app.post("/devices/:id/music/volume", async (req: any, rep) => {
         const deviceId = req.params.id as string;
 
@@ -221,11 +209,8 @@ const control: FastifyPluginAsync = async (app) => {
             });
         }
 
-        // Vers agent → utilise l’event prévu par l’agent (on_music_volume)
-        // L’agent accepte { music:{ volume } } OU { volume } (il gère les deux).
         emitToAgent(app, deviceId, "music:volume", { music: { volume: value } });
 
-        // Rafraîchit les UIs
         emitStateToUIs(app, deviceId, {
             music: { status: stored.status as "play" | "pause", volume: stored.volume, track: null },
         });
@@ -234,7 +219,6 @@ const control: FastifyPluginAsync = async (app) => {
         return rep.code(202).send({ accepted: true });
     });
 
-    // Music: commandes
     app.post("/devices/:id/music/cmd", async (req: any, rep) => {
         const deviceId = req.params.id as string;
 
@@ -249,7 +233,6 @@ const control: FastifyPluginAsync = async (app) => {
 
         const { action } = musicCmdSchema.parse(req.body);
 
-        // On met à jour status uniquement pour play/pause
         const existing = await app.prisma.musicState.findUnique({ where: { deviceId } });
         let nextStatus: "play" | "pause" = existing?.status === "play" ? "play" : "pause";
         if (action === "play") nextStatus = "play";
@@ -267,10 +250,8 @@ const control: FastifyPluginAsync = async (app) => {
             });
         }
 
-        // Vers agent → event prévu par l’agent (on_music_cmd)
         emitToAgent(app, deviceId, "music:cmd", { music: { action } });
 
-        // Rafraîchit les UIs
         emitStateToUIs(app, deviceId, {
             music: { status: stored.status as "play" | "pause", volume: stored.volume, track: null },
         });

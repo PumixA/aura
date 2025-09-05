@@ -14,7 +14,6 @@ export default function Dashboard() {
     const [loading, setLoading] = React.useState(true);
     const [err, setErr] = React.useState<string | null>(null);
 
-    // Pour afficher "en ligne" si le dernier fetch est récent
     const [lastOkAt, setLastOkAt] = React.useState<number | null>(null);
     const online = React.useMemo(() => {
         if (!lastOkAt) return false;
@@ -54,7 +53,6 @@ export default function Dashboard() {
                 </div>
 
                 <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                    {/* Indicateur online/offline */}
                     <div
                         title={online ? "Miroir en ligne" : "Miroir hors ligne"}
                         style={{
@@ -93,7 +91,6 @@ export default function Dashboard() {
                 </div>
             </header>
 
-            {/* Panneau propriétaire */}
             <div className="card" style={{ marginTop: 16 }}>
                 <div className="card-head" style={{ marginBottom: 8 }}>
                     <h2 style={{ margin: 0 }}>Propriétaire & Pairing</h2>
