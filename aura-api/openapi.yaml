@@ -228,13 +228,25 @@ components:
       example: { name: Miroir Chambre }
 
     # ── Pairing (Agent)
+    PairingTokenRequest:
+      type: object
+      properties:
+        transfer:
+          type: boolean
+          description: "Si true, le token permet un transfert de propriétaire."
+      example: { transfer: true }
+
     PairingTokenResponse:
       type: object
       required: [token, expiresAt]
       properties:
         token: { type: string }
         expiresAt: { type: string, format: date-time }
-      example: { token: "123456", expiresAt: 2025-08-27T18:45:00.000Z }
+        transfer:
+          type: boolean
+          nullable: true
+          description: "Présent si le token a été créé avec l’option transfer."
+      example: { token: "123456", expiresAt: 2025-08-27T18:45:00.000Z, transfer: true }
 
     HeartbeatBody:
       type: object
@@ -404,6 +416,40 @@ components:
         lastName: { type: string, nullable: true }
         role: { type: string }
         createdAt: { type: string, format: date-time }
+
+    # ── Owner / Online / Unpair (NOUVEAUX SCHEMAS)
+    DeviceOwnerResponse:
+      type: object
+      required: [owner]
+      properties:
+        owner:
+          oneOf:
+            - $ref: '#/components/schemas/User'
+            - type: "null"
+      example:
+        owner:
+          id: 37bfce36-e569-46dd-b6b3-7f3c1b98c668
+          email: alice@example.com
+          firstName: Alice
+          lastName: Martin
+
+    DeviceOnlineResponse:
+      type: object
+      required: [online]
+      properties:
+        online: { type: boolean }
+        lastSeenAt:
+          type: string
+          format: date-time
+          nullable: true
+      example: { online: true, lastSeenAt: 2025-08-27T18:37:00.000Z }
+
+    UnpairResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+      example: { ok: true }
 
 paths:
   # 0) Health & Public
@@ -597,7 +643,10 @@ paths:
   /devices/pair:
     post:
       tags: [Devices, Pairing]
-      summary: Pair a device with a short token
+      summary: Pair a device with a short token (supports transfer tokens)
+      description: >
+        Associe un device via un token court généré par l'agent. Si le token
+        a été créé avec `transfer=true`, un transfert de propriétaire est autorisé.
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
@@ -669,7 +718,12 @@ paths:
     get:
       tags: [Devices]
       summary: Device snapshot (leds, music, widgets)
-      security: [{ bearerAuth: [] }]
+      description: >
+        Accessible via **JWT propriétaire** ou via **ApiKey + x-device-id** de l'agent.
+      security:
+        - bearerAuth: []
+        - apiKeyAgent: []
+          xDeviceId: []
       parameters:
         - in: path
           name: deviceId
@@ -688,12 +742,78 @@ paths:
                   music: { $ref: '#/components/schemas/MusicState' }
                   widgets: { $ref: '#/components/schemas/WidgetsList' }
 
+  /devices/{deviceId}/owner:
+    get:
+      tags: [Devices]
+      summary: Get device owner (or null)
+      description: >
+        Accessible via **JWT propriétaire** ou via **ApiKey + x-device-id** de l'agent.
+      security:
+        - bearerAuth: []
+        - apiKeyAgent: []
+          xDeviceId: []
+      parameters:
+        - in: path
+          name: deviceId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeviceOwnerResponse' }
+
+  /devices/{deviceId}/online:
+    get:
+      tags: [Devices]
+      summary: Get device online status
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: deviceId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeviceOnlineResponse' }
+
+  /devices/{deviceId}/unpair:
+    post:
+      tags: [Devices, Pairing]
+      summary: Unpair device (set ownerId=null)
+      description: >
+        Accessible via **JWT propriétaire** ou via **ApiKey + x-device-id** de l'agent.
+      security:
+        - bearerAuth: []
+        - apiKeyAgent: []
+          xDeviceId: []
+      parameters:
+        - in: path
+          name: deviceId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UnpairResponse' }
+
   # 3) Pairing (Agent)
   /devices/{deviceId}/pairing-token:
     post:
       tags: [Pairing]
       summary: Generate pairing token (Agent)
-      security: [{ apiKeyAgent: [] }, { xDeviceId: [] }]
+      description: >
+        Auth **ApiKey + x-device-id**. Le body peut contenir `{ transfer: true }` pour créer
+        un token autorisant la réassignation du propriétaire lors de `/devices/pair`.
+      security:
+        - apiKeyAgent: []
+          xDeviceId: []
       parameters:
         - in: header
           name: x-device-id
@@ -703,6 +823,11 @@ paths:
           name: deviceId
           required: true
           schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PairingTokenRequest' }
       responses:
         '200':
           description: ok
@@ -714,7 +839,9 @@ paths:
     post:
       tags: [Pairing]
       summary: Heartbeat (Agent)
-      security: [{ apiKeyAgent: [] }, { xDeviceId: [] }]
+      security:
+        - apiKeyAgent: []
+          xDeviceId: []
       parameters:
         - in: header
           name: x-device-id
@@ -839,6 +966,7 @@ paths:
     post:
       tags: [Music]
       summary: Set music volume
+      description: "Payload attendu: { value: number } (0..100)."
       security: [{ bearerAuth: [] }]
       parameters:
         - in: path

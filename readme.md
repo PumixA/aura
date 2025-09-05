@@ -51,46 +51,48 @@ Desktop (Electron) ─────────┘
 aura/
 ├─ aura-api/                 # Backend Node/Fastify/Prisma
 │  ├─ src/
-│  │  ├─ server.ts           # boot Fastify + Swagger + Prisma + Realtime
+│  │  ├─ server.ts           # Boot Fastify + Swagger + Prisma + Realtime
 │  │  ├─ realtime.ts         # Socket.IO (/agent), auth ApiKey/JWT
 │  │  ├─ plugins/prisma.ts
 │  │  └─ routes/
-│  │     ├─ auth.ts          # register/login/refresh/logout
-│  │     ├─ me.ts            # profil utilisateur + sessions
-│  │     ├─ devices.ts       # CRUD device + state global
-│  │     ├─ control.ts       # relais REST → Socket.IO (leds/music)
-│  │     ├─ pairing.ts       # pairing token & heartbeat agent
-│  │     ├─ weather.ts       # météo publique
-│  │     ├─ audit_admin.ts   # audit & administration
+│  │     ├─ auth.ts
+│  │     ├─ me.ts
+│  │     ├─ devices.ts       # CRUD, state, owner, unpair (nouveau)
+│  │     ├─ control.ts
+│  │     ├─ pairing.ts       # pairing-token & heartbeat
+│  │     ├─ weather.ts
+│  │     ├─ audit_admin.ts
 │  │     ├─ health.ts
-│  │     └─ public.ts        # config publique (feature flags)
+│  │     └─ public.ts
 │  └─ prisma/schema.prisma
 │
 ├─ agent/                    # Daemon Python (Pi)
-│  ├─ config.yaml            # api_url, device_id, api_key, …
-│  ├─ main.py                # client Socket.IO + poll REST + heartbeat
-│  └─ utils/
-│     ├─ leds.py             # driver WS2812B (ou mock)
-│     ├─ music.py            # pactl/playerctl (session utilisateur)
-│     └─ state.py            # snapshot d’état local
+│  ├─ config.yaml
+│  ├─ main.py
+│  └─ utils/{leds.py,music.py,state.py}
 │
 ├─ desktop/                  # UI Electron + React + Vite
-│  ├─ electron/
-│  │  ├─ main.cjs
-│  │  └─ preload.cjs
+│  ├─ electron/{main.cjs,preload.cjs}
 │  └─ src/
-│     ├─ api/client.ts
-│     ├─ socket.ts
-│     ├─ store/{auth,ui}.ts
-│     ├─ components/{DevicePicker,LedPanel,MusicPanel}.tsx
-│     ├─ pages/{Login,Dashboard}.tsx
+│     ├─ api/{client.ts,device.ts}
+│     ├─ components/{LedPanel.tsx,MusicPanel.tsx,OwnerPanel.tsx}
+│     ├─ pages/{Dashboard.tsx,Home.tsx}
 │     ├─ App.tsx
-│     └─ main.tsx
+│     ├─ main.tsx
+│     ├─ index.css           # styles globaux (importé par main.tsx)
+│     └─ App.css
 │
 └─ mobile/                   # App Expo/React Native
-   ├─ app/…
-   ├─ src/api/{client,socket}.ts
-   ├─ src/store/{auth,devices,deviceState}.ts
+   ├─ app/
+   │  ├─ (auth)/{_layout.tsx,login.tsx,register.tsx}
+   │  ├─ (tabs)/{_layout.tsx,index.tsx,profile.tsx}
+   │  ├─ device/[id].tsx
+   │  ├─ index.tsx
+   │  ├─ _layout.tsx
+   │  ├─ +not-found.tsx
+   │  └─ pair-qr.tsx         # Scan QR only (nouveau visuel)
+   ├─ src/api/{client.ts,socket.ts,authBridge.ts}
+   ├─ src/store/{auth.ts,devices.ts,deviceState.ts}
    ├─ constants/Colors.ts
    └─ components/ui.tsx
 ```
@@ -183,10 +185,10 @@ API_KEY=$(echo "$RESP"   | sed -E 's/.*"apiKey":"([^"]+)".*/\1/')
 cd aura/agent
 python3 -m venv .venv && source .venv/bin/activate
 pip install -U pip
-pip install -r requirements.txt  # voir fichier ci-dessous
+pip install -r requirements.txt
 
 cat > config.yaml <<EOF
-api_url: "http://192.168.1.96:3000"   # ⚠️ mettre l'IP/host du serveur API (pas 127.0.0.1 si distant)
+api_url: "http://192.168.1.96:3000"   # ⚠️ IP/host du serveur API réel
 ws_path: "/socket.io"
 namespace: "/agent"
 device_id: "$DEVICE_ID"
@@ -197,13 +199,16 @@ sink_watch_sec: 0.3
 EOF
 
 sudo -E AURA_DEBUG=1 .venv/bin/python main.py
-# ✅ attendu : "Connecté au hub /agent", puis logs POLL + SINK
 ```
 
 ### 5) Desktop
 
 ```bash
 cd aura/desktop
+cp .env.development.example .env.development
+# .env.development → VITE_API_URL=http://<API_HOST>:3000
+#                    VITE_DEVICE_ID=<DEVICE_ID>
+#                    VITE_API_KEY=<API_KEY>
 npm i
 npm run dev
 ```
@@ -213,6 +218,17 @@ npm run dev
 ## Backend API
 
 **Stack** : Fastify (TS), Prisma (Postgres), JWT, Swagger (OpenAPI 3.0).
+
+### Changements récents (importants)
+
+* **Music volume** : le backend attend **`{ value: number }`** (et non `{ volume }`) sur `POST /devices/:id/music/volume`.
+* **Pairing token étendu** : `POST /devices/:deviceId/pairing-token` (auth **ApiKey + x-device-id**) accepte en **body** `{ transfer?: boolean }`. Si `transfer=true`, le token autorise la **réassignation de propriétaire** lors de `/devices/pair`.
+* **Owner (nouveau)** :
+  `GET /devices/:deviceId/owner` — retourne `{ owner: { id,email,firstName,lastName } | null }`
+  Auth **ApiKey+x-device-id** (agent/desktop) **ou** **JWT** du propriétaire.
+* **Unpair (nouveau)** :
+  `POST /devices/:deviceId/unpair` — met `ownerId=null, pairedAt=null` + audit `DEVICE_UNPAIRED`.
+  Auth **ApiKey+x-device-id** (agent/desktop) **ou** **JWT** du propriétaire.
 
 ### Env (`aura-api/.env`)
 
@@ -255,15 +271,17 @@ npm run dev   # tsx watch src/server.ts
 * **Devices (user)**
 
     * `GET /api/v1/devices`
-    * `POST /api/v1/devices/pair`
+    * `POST /api/v1/devices/pair` (accepte tokens **transfer**)
     * `PUT /api/v1/devices/:deviceId`
     * `DELETE /api/v1/devices/:deviceId`
-    * `GET /api/v1/devices/:deviceId/state` — snapshot global (leds, music, widgets)
+    * `GET /api/v1/devices/:deviceId/state`
+    * `GET /api/v1/devices/:deviceId/owner` **(nouveau)**
 
 * **Pairing (agent)**
 
-    * `POST /api/v1/devices/:deviceId/pairing-token`
+    * `POST /api/v1/devices/:deviceId/pairing-token` (**transfer** optionnel)
     * `POST /api/v1/devices/:deviceId/heartbeat`
+    * `POST /api/v1/devices/:deviceId/unpair` **(nouveau)**
 
 * **LEDs**
 
@@ -275,7 +293,7 @@ npm run dev   # tsx watch src/server.ts
 
     * `GET /api/v1/devices/:deviceId/music`
     * `POST /api/v1/devices/:deviceId/music/cmd`
-    * `POST /api/v1/devices/:deviceId/music/volume`
+    * `POST /api/v1/devices/:deviceId/music/volume` (**`{ value }`**)
 
 * **Widgets**
 
@@ -315,188 +333,72 @@ npm run dev   # tsx watch src/server.ts
 
 ## Agent Matériel (Python)
 
-### C’est quoi ?
-
-Un **daemon** Python qui tourne sur le **Raspberry Pi** (ou un PC), s’authentifie auprès de l’API avec l’**ApiKey du device**, et **synchronise en continu** l’état **matériel** avec l’état **BDD** :
-
-* **LEDs** : synchro immédiate via WS (`leds:*` & `state:apply`) + snapshot au boot.
-* **Musique** : **double verrou** :
-
-    * **POLL REST** périodique de la route `GET /devices/:id/state` (lit `music.status` & `music.volume` en BDD), puis applique si différent.
-    * **WATCH local** du **sink** (via `pactl`), pour remonter tout changement de volume côté OS/boutons.
-
-Chaque action est **loguée** : détection → récupération JSON → application (pactl/playerctl) → émission `state:report`.
-
-### À quoi ça sert ?
-
-* Assurer que **l’appareil reflète exactement la BDD** au démarrage **et** lors de toute modification (qu’elle vienne du mobile/desktop ou de l’OS local).
-* Éviter les désynchronisations : même si un événement WS se perd, le **poll REST** rattrape; si l’utilisateur change le volume localement, le **watch** remonte l’info.
-
-### Installation
-
-Dans `agent/requirements.txt` :
+Voir section d’origine : poll REST musique + watch local `pactl`, drivers LEDs, etc.
+`requirements.txt` minimal :
 
 ```
 python-socketio==5.11.3
 websocket-client==1.8.0
 requests==2.32.3
 PyYAML==6.0.2
-# LEDs réelles (optionnel si mock) :
 rpi_ws281x==4.3.4
 ```
-
-Installation :
-
-```bash
-cd aura/agent
-python3 -m venv .venv && source .venv/bin/activate
-pip install -U pip
-pip install -r requirements.txt
-```
-
-### Configuration
-
-`agent/config.yaml` :
-
-```yaml
-api_url: "http://192.168.1.96:3000"  # ⚠️ mettre l'IP/hostname réel de l'API (pas 127.0.0.1 si le hub est ailleurs)
-ws_path: "/socket.io"
-namespace: "/agent"
-device_id: "<DEVICE_ID>"
-api_key: "<API_KEY>"
-heartbeat_sec: 10
-
-# Musique
-music_poll_sec: 1.0      # fréquence du poll REST musique (plus bas = plus réactif)
-sink_watch_sec: 0.3      # fréquence du watch volume local (pactl)
-
-# Boot
-fallback_local_on_boot: false  # si vrai : applique l’état LEDs local si l’API est indisponible au boot
-```
-
-Variables d’environnement utiles :
-
-* `AURA_DEBUG=1` : logs détaillés des commandes `pactl`/`playerctl` (RUN/OUT/ERR).
-* `AURA_PULSE_SINK=<sink_name>` : force un sink spécifique (`pactl list short sinks`).
-* LEDs : `AURA_LED_COUNT`, `AURA_MAX_HW_BRIGHTNESS`, etc.
-
-### Lancement (dev)
-
-```bash
-cd aura/agent
-sudo -E AURA_DEBUG=1 .venv/bin/python main.py
-```
-
-Attendu dans les logs :
-
-* `✅ Connecté au hub /agent`
-* À intervalle régulier : `🕑 POLL tick (every Xs)`, `🟦 RAW GET ... → 200`, `🔎 POLL tick → DB {...} • SINK {...}`
-* En cas d’écart : `🔁 POLL APPLY volume DB X% → SINK Y%` puis `✅ POLL done: sink now X%`
-* Si changement local : `👂 SINK change detected: ...`
-
-### Spécificités de fonctionnement
-
-**LEDs (référence côté serveur)**
-
-1. Au boot : `GET /devices/:id/state` → `_apply_leds(...)` → `state:report`.
-2. En temps réel : événements WS `leds:update/state/style` **ou** `state:apply` partiel → application immédiate + `state:report`.
-3. Brightness : valeur **logique 0..100** plafonnée matériellement par `AURA_MAX_HW_BRIGHTNESS`.
-
-**Musique (volume + status)**
-
-1. Au boot : `GET /devices/:id/state` → applique `music.status` + `music.volume`.
-2. **Poll REST** permanent (toutes `music_poll_sec` s) :
-
-    * Compare `DB.music` avec l’état réel du **sink** (`pactl get-sink-volume` via `utils/music.py`).
-    * Si différence de **volume** → `pactl set-sink-volume <db>%` → relecture réelle → `state:report`.
-    * Si différence de **status** → `playerctl play/pause` → `state:report`.
-3. **Watch local** (toutes `sink_watch_sec` s) :
-
-    * Relit le **volume réel** ; si ça bouge (boutons, mixer…) → maj état + `state:report`.
-4. Tous les chemins d’exécution sont **logués** (détection de la modif, récupération JSON, adaptation système).
-
-**Exécution utilisateur (crucial)**
-
-* `utils/music.py` exécute `pactl`/`playerctl` **dans la session utilisateur** (ex. `melvin`) :
-
-    * Si root : `runuser -u melvin -- <cmd>` + `XDG_RUNTIME_DIR=/run/user/1000`.
-    * Sinon : commande directe avec l’environnement courant.
-* `get_state()` relit **toujours** le volume réel avant de renvoyer l’état.
-
-### Service systemd (prod)
-
-`/etc/systemd/system/aura-agent.service` :
-
-```ini
-[Unit]
-Description=Aura Agent (hardware daemon)
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=pi
-WorkingDirectory=/opt/aura/agent
-ExecStart=/opt/aura/agent/.venv/bin/python /opt/aura/agent/main.py
-Restart=always
-RestartSec=3
-Environment=PYTHONUNBUFFERED=1
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Déploiement :
-
-```bash
-sudo mkdir -p /opt/aura
-sudo rsync -a ~/aura/agent/ /opt/aura/agent/
-sudo systemctl daemon-reload
-sudo systemctl enable --now aura-agent
-journalctl -u aura-agent -f
-```
-
-### Tests & debug (agent)
-
-**Vérifier la route BDD** :
-
-```bash
-curl -v \
-  -H "Authorization: ApiKey <API_KEY>" \
-  -H "x-device-id: <DEVICE_ID>" \
-  http://<API_HOST>:3000/api/v1/devices/<DEVICE_ID>/state
-```
-
-**Watch du JSON `music`** :
-
-```bash
-watch -n 1 "curl -sS \
-  -H 'Authorization: ApiKey <API_KEY>' \
-  -H 'x-device-id: <DEVICE_ID>' \
-  http://<API_HOST>:3000/api/v1/devices/<DEVICE_ID>/state | jq .music"
-```
-
-**Checklist si ça ne bouge pas** :
-
-* `api_url` pointe bien vers l’**IP/host réel** (pas `127.0.0.1` si le hub est sur une autre machine).
-* Logs de poll : `🟦 RAW GET ... → 200`.
-* `AURA_DEBUG=1` montre `🟪 RUN: pactl ... ENV.XDG_RUNTIME_DIR=/run/user/1000`.
-* Forcer le sink avec `AURA_PULSE_SINK`.
 
 ---
 
 ## UI Desktop (Electron)
 
-**Stack** : Electron (main), React + Vite (renderer), Zustand, axios, socket.io-client.
+**Stack** : Electron (main), React + Vite (renderer), Zustand, axios.
 
-En dev :
+### Environnement
+
+`desktop/.env.development` :
+
+```
+VITE_API_URL=http://192.168.1.96:3000
+VITE_DEVICE_ID=<DEVICE_ID>
+VITE_API_KEY=<API_KEY>
+VITE_MUSIC_POLL_SEC=1
+```
+
+### Dépendances
 
 ```bash
 cd aura/desktop
-cp .env.development.example .env.development   # VITE_API_URL=http://<API_HOST>:3000
 npm i
 npm run dev
 ```
+
+### Points importants & changements
+
+* **API client** (`src/api/client.ts`)
+
+    * En-têtes par défaut **ApiKey + x-device-id** (mode agent/desktop).
+* **Music volume** (`src/api/device.ts`)
+
+    * `musicSetVolume(value: number)` envoie **`{ value }`** (conforme API).
+* **Owner/Propriétaire** (`src/components/OwnerPanel.tsx`)
+
+    * Affiche l’**owner** via `GET /devices/:id/owner`.
+    * Bouton **Dissocier** → `POST /devices/:id/unpair` (ApiKey ou JWT propriétaire).
+    * Bouton **Associer** → génère un **pairing-token** `transfer=true`, affiche un **QR** (texte `aura://pair?deviceId=...&token=...`) à scanner depuis le **mobile**.
+* **Statut en ligne** (Dashboard)
+
+    * Bandeau « En ligne / Hors ligne (vu il y a X) » calculé depuis `lastSeenAt` lorsque disponible via `/devices` côté mobile ou via heartbeat côté API (Desktop affiche online en header si `state` arrive régulièrement; ping manuel via refresh).
+* **Styles/CSS**
+
+    * Vérifie que `src/main.tsx` importe **`./index.css`** (sinon aucun style ne s’applique).
+    * Palette simple, cartes, header lisible.
+
+### Fichiers touchés côté Desktop
+
+* `src/api/client.ts` (OK, version fournie)
+* `src/api/device.ts` (OK, version fournie – **`{ value }`**)
+* `src/components/OwnerPanel.tsx` (panel propriétaire / dissocier / QR)
+* `src/components/MusicPanel.tsx` (inchangé côté API, envoie `{ value }` via `musicSetVolume`)
+* `src/pages/Dashboard.tsx` (affichage online + OwnerPanel + petites améliorations UI)
+* `src/index.css` + `src/App.css` (styles globaux)
+* `src/main.tsx` (assure `import './index.css'`)
 
 ---
 
@@ -504,19 +406,40 @@ npm run dev
 
 **Stack** : Expo (React Native + TS), `expo-router`, Zustand, axios, socket.io-client.
 
-**État** :
-
-* Auth complète (register/login/refresh/logout), tokens persistés en **SecureStore**.
-* Pages stylées (gradient Aurora), Home (devices), Device (LEDs/Music/Widgets + WS), Profile (édition).
-* Sockets : `auth.token = "Bearer <JWT>"`, origin dérivé de `EXPO_PUBLIC_API_URL`.
-
-Lancer :
+### Dépendances ajoutées pour le scan
 
 ```bash
-cd mobile
+cd aura/mobile
 npm i
-npx expo install expo-secure-store expo-barcode-scanner expo-haptics expo-blur expo-linear-gradient
-npm run start
+npx expo install expo-camera expo-haptics expo-linear-gradient @expo/vector-icons
+```
+
+> iOS : ajoute `NSCameraUsageDescription` dans `app.json`.
+> Android : la permission **CAMERA** est gérée automatiquement par Expo.
+
+### Écran de scan QR (pairing)
+
+* **`app/pair-qr.tsx`** lit uniquement un **QR** (via `expo-camera` / `CameraView`).
+* Parsing :
+
+    * JSON `{ deviceId, token }` **ou**
+    * URL `aura://pair?deviceId=...&token=...`
+* À la lecture valide → **POST `/devices/pair`** `{ deviceId, pairingToken: token }`, feedback haptique, **fetch** devices, **back**.
+* Visuel aligné avec le reste (gradient Aurora, GlassCard, overlay de cadrage, torche, libellés).
+
+### Fichiers touchés côté Mobile
+
+* `app/pair-qr.tsx` (**refait** : scan only, visuel cohérent)
+* `src/store/devices.ts` (aucune modif fonctionnelle si déjà `fetchDevices()`)
+* `src/api/client.ts` (inchangé)
+* `constants/Colors.ts`, `components/ui.tsx` (déjà existants pour le style)
+
+### Lancement
+
+```bash
+cd aura/mobile
+npm i
+npm run start   # (ou npx expo start)
 ```
 
 ---
@@ -541,8 +464,6 @@ EXPOSE 3000
 CMD ["node", "dist/server.js"]
 ```
 
-Build & run :
-
 ```bash
 cd aura/aura-api
 npm run build
@@ -554,26 +475,75 @@ docker run --rm -p 3000:3000 --env-file .env aura-api:latest
 
 ## Tests manuels utiles
 
-* Santé API :
+**Santé API** :
 
-  ```bash
-  curl http://<API_HOST>:3000/api/v1/health
-  ```
+```bash
+curl http://<API_HOST>:3000/api/v1/health
+```
 
-* Mes devices :
+**Mes devices (JWT)** :
 
-  ```bash
-  curl -H "Authorization: Bearer $TOKEN" \
-    http://<API_HOST>:3000/api/v1/devices
-  ```
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  http://<API_HOST>:3000/api/v1/devices
+```
 
-* Émettre une commande LED (debug) :
+**Snapshot device (ApiKey + x-device-id)** :
 
-  ```bash
-  curl -X POST http://<API_HOST>:3000/__debug/emit \
-    -H 'Content-Type: application/json' \
-    -d '{"deviceId":"<DEVICE_ID>","event":"leds:update","payload":{"on":true,"color":"#00ff88","brightness":60}}'
-  ```
+```bash
+curl -H "Authorization: ApiKey <API_KEY>" -H "x-device-id: <DEVICE_ID>" \
+  http://<API_HOST>:3000/api/v1/devices/<DEVICE_ID>/state
+```
+
+**Owner (ApiKey ou JWT)** :
+
+```bash
+# ApiKey+x-device-id (desktop/agent)
+curl -H "Authorization: ApiKey <API_KEY>" -H "x-device-id: <DEVICE_ID>" \
+  http://<API_HOST>:3000/api/v1/devices/<DEVICE_ID>/owner
+
+# JWT (propriétaire)
+curl -H "Authorization: Bearer $TOKEN" \
+  http://<API_HOST>:3000/api/v1/devices/<DEVICE_ID>/owner
+```
+
+**Unpair (ApiKey ou JWT propriétaire)** :
+
+```bash
+curl -X POST \
+  -H "Authorization: ApiKey <API_KEY>" -H "x-device-id: <DEVICE_ID>" \
+  http://<API_HOST>:3000/api/v1/devices/<DEVICE_ID>/unpair
+```
+
+**Pairing-token (transfer)** :
+
+```bash
+curl -X POST \
+  -H "Authorization: ApiKey <API_KEY>" -H "x-device-id: <DEVICE_ID>" \
+  -H "Content-Type: application/json" \
+  -d '{"transfer":true}' \
+  http://<API_HOST>:3000/api/v1/devices/<DEVICE_ID>/pairing-token
+```
+
+**Pair depuis Mobile (JWT)** :
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"deviceId":"<DEVICE_ID>", "pairingToken":"123456"}' \
+  http://<API_HOST>:3000/api/v1/devices/pair
+```
+
+**Music volume** :
+
+```bash
+# ⚠️ payload = { "value": 35 } (pas "volume")
+curl -X POST \
+  -H "Authorization: ApiKey <API_KEY>" -H "x-device-id: <DEVICE_ID>" \
+  -H "Content-Type: application/json" \
+  -d '{"value":35}' \
+  http://<API_HOST>:3000/api/v1/devices/<DEVICE_ID>/music/volume
+```
 
 ---
 
@@ -599,6 +569,6 @@ Aura | Delorme Melvin.
 
 ### Notes complémentaires
 
-* `utils/leds.py` : mapping **RGB** + plafond **matériel** de brightness.
-* `utils/music.py` : `pactl`/`playerctl` en **session utilisateur** (via `runuser` si root), lecture **réelle** du volume.
-* `main.py` : **poll REST musique** + **watch local** + **handlers WS** + **throttling** des `state:report`.
+* **Desktop** : si « aucun style », vérifier `import './index.css'` dans `src/main.tsx`.
+* **Agent** : pour audio, exécuter `pactl`/`playerctl` dans la **session utilisateur** (voir variables `XDG_RUNTIME_DIR` et `runuser` si root).
+* **Pairing via QR** : Desktop génère `aura://pair?deviceId=<id>&token=<token>` avec `transfer=true`; Mobile scanne et appelle `/devices/pair`.
