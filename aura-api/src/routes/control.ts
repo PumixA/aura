@@ -1,73 +1,118 @@
 import type { FastifyPluginAsync } from "fastify";
+import bcrypt from "bcryptjs";
 import { z } from "zod";
 
+// ───────── Schemas
 const colorHex = z.string().regex(/^#[0-9A-Fa-f]{6}$/);
 const ledStateSchema = z.object({ on: z.boolean() });
 
-// ⚠️ preset accepte maintenant null pour "none"
+// preset peut être null → "aucun"
 const ledStyleSchema = z.object({
     color: colorHex.optional(),
     brightness: z.number().int().min(0).max(100).optional(),
-    preset: z.string().nullable().optional()
+    preset: z.string().nullable().optional(),
 }).refine(
     (v) => v.color !== undefined || v.brightness !== undefined || v.preset !== undefined,
-    { message: "At least one of color, brightness, preset must be provided" }
+    { message: "Provide one of color|brightness|preset" }
 );
 
-const musicCmdSchema = z.object({
-    action: z.enum(["play", "pause", "next", "prev"])
-});
-const musicVolumeSchema = z.object({
-    value: z.number().int().min(0).max(100)
-});
+const musicCmdSchema = z.object({ action: z.enum(["play", "pause", "next", "prev"]) });
+const musicVolumeSchema = z.object({ value: z.number().int().min(0).max(100) });
 
-const control: FastifyPluginAsync = async (app) => {
-    const authGuard = async (req: any) => { await req.jwtVerify() };
+// ───────── Helpers d'auth & WS (même logique que devices.ts)
+function isAgentRequest(req: any) {
+    const auth = req.headers["authorization"];
+    const did = req.headers["x-device-id"];
+    return typeof auth === "string" && auth.startsWith("ApiKey ") && !!did;
+}
 
-    const ensureOwnDevice = async (userId: string, deviceId: string) => {
-        const d = await app.prisma.device.findUnique({
-            where: { id: deviceId },
-            select: { ownerId: true, disabled: true }
-        });
-        if (!d) throw app.httpErrors.notFound("Device not found");
-        if (d.ownerId !== userId) throw app.httpErrors.forbidden("Not your device");
-        if (d.disabled) throw app.httpErrors.conflict("Device disabled");
-    };
+async function verifyAgentApiKey(appAny: any, req: any, deviceIdFromPath?: string) {
+    const auth = req.headers["authorization"];
+    const didHeader = req.headers["x-device-id"] as string | undefined;
+    if (!auth || typeof auth !== "string" || !auth.startsWith("ApiKey ") || !didHeader) {
+        throw appAny.httpErrors.unauthorized("Missing ApiKey or x-device-id");
+    }
+    const plain = auth.slice(7).trim();
+    const deviceId = deviceIdFromPath ?? didHeader;
+    if (deviceId !== didHeader) throw appAny.httpErrors.unauthorized("x-device-id mismatch");
 
-    const io = () => (app as any).__io as import("socket.io").Server | undefined;
-    const emitToAgent = (deviceId: string, event: string, payload: any) => {
-        io()?.of("/agent").to(deviceId).emit(event, { ...payload, deviceId });
-    };
-    const emitStateUpdateToUIs = (deviceId: string, patch: any) => {
-        io()?.of("/agent").to(deviceId).emit("state:update", { deviceId, ...patch });
-    };
-
-    const getLedSnapshot = async (deviceId: string) => {
-        const led = await app.prisma.ledState.findUnique({ where: { deviceId } });
-        return led
-            ? { on: led.on, color: led.color, brightness: led.brightness, preset: led.preset ?? null }
-            : { on: false, color: "#FFFFFF", brightness: 50, preset: null };
-    };
-    const getMusicSnapshot = async (deviceId: string) => {
-        const m = await app.prisma.musicState.findUnique({ where: { deviceId } });
-        return m
-            ? { status: m.status as "play" | "pause", volume: m.volume, track: null }
-            : { status: "pause" as const, volume: 50, track: null };
-    };
-
-    // ───────────────── LEDs
-
-    app.get("/devices/:id/leds", { onRequest: [authGuard] }, async (req: any) => {
-        const deviceId = req.params.id as string;
-        const userId = req.user.sub as string;
-        await ensureOwnDevice(userId, deviceId);
-        return await getLedSnapshot(deviceId);
+    const dev = await appAny.prisma.device.findUnique({
+        where: { id: deviceId },
+        select: { apiKeyHash: true, disabled: true },
     });
+    if (!dev || dev.disabled || !dev.apiKeyHash) {
+        throw appAny.httpErrors.unauthorized("Device invalid/disabled");
+    }
+    const ok = await bcrypt.compare(plain, dev.apiKeyHash);
+    if (!ok) throw appAny.httpErrors.unauthorized("Invalid ApiKey");
+    return deviceId;
+}
 
-    app.post("/devices/:id/leds/state", { onRequest: [authGuard] }, async (req: any, rep) => {
+async function ensureOwnDevice(appAny: any, userId: string, deviceId: string) {
+    const d = await appAny.prisma.device.findUnique({
+        where: { id: deviceId },
+        select: { ownerId: true, disabled: true },
+    });
+    if (!d) throw appAny.httpErrors.notFound("Device not found");
+    if (d.ownerId !== userId) throw appAny.httpErrors.forbidden("Not your device");
+    if (d.disabled) throw appAny.httpErrors.conflict("Device disabled");
+}
+
+function io(appAny: any) {
+    return (appAny as any).__io as import("socket.io").Server | undefined;
+}
+
+function emitToAgent(appAny: any, deviceId: string, event: string, payload: any) {
+    io(appAny)?.of("/agent").to(deviceId).emit(event, { deviceId, ...payload });
+}
+
+function emitStateToUIs(appAny: any, deviceId: string, patch: any) {
+    io(appAny)?.of("/agent").to(deviceId).emit("state:update", { deviceId, ...patch });
+}
+
+async function touchPresence(appAny: any, deviceId: string) {
+    const now = new Date();
+    await appAny.prisma.device.update({
+        where: { id: deviceId },
+        data: { lastSeenAt: now },
+        select: { id: true },
+    });
+    io(appAny)?.of("/agent").to(deviceId).emit("presence", {
+        deviceId,
+        online: true,
+        lastSeenAt: now.toISOString(),
+    });
+}
+
+async function getLedSnapshot(appAny: any, deviceId: string) {
+    const led = await appAny.prisma.ledState.findUnique({ where: { deviceId } });
+    return led
+        ? { on: led.on, color: led.color, brightness: led.brightness, preset: led.preset ?? null }
+        : { on: false, color: "#FFFFFF", brightness: 50, preset: null };
+}
+
+async function getMusicSnapshot(appAny: any, deviceId: string) {
+    const m = await appAny.prisma.musicState.findUnique({ where: { deviceId } });
+    return m
+        ? { status: m.status as "play" | "pause", volume: m.volume, track: null }
+        : { status: "pause" as const, volume: 50, track: null };
+}
+
+// ───────── Plugin
+const control: FastifyPluginAsync = async (app) => {
+    // LEDs: on/off
+    app.post("/devices/:id/leds/state", async (req: any, rep) => {
         const deviceId = req.params.id as string;
-        const userId = req.user.sub as string;
-        await ensureOwnDevice(userId, deviceId);
+
+        // Auth: ApiKey (agent/desktop) OU JWT (user)
+        let userId: string | null = null;
+        if (isAgentRequest(req)) {
+            await verifyAgentApiKey(app, req, deviceId);
+        } else {
+            await app.authenticate(req);
+            userId = req.user.sub as string;
+            await ensureOwnDevice(app, userId, deviceId);
+        }
 
         const body = ledStateSchema.parse(req.body);
 
@@ -75,123 +120,162 @@ const control: FastifyPluginAsync = async (app) => {
             await px.ledState.upsert({
                 where: { deviceId },
                 update: { on: body.on },
-                create: { deviceId, on: body.on, color: "#FFFFFF", brightness: 50 }
+                create: { deviceId, on: body.on, color: "#FFFFFF", brightness: 50, preset: null },
             });
-            await px.audit.create({
-                data: { userId, deviceId, type: "LED_SET", payload: { state: body } }
-            });
+            if (userId) {
+                await px.audit.create({
+                    data: { userId, deviceId, type: "LED_SET_STATE", payload: { state: body } },
+                });
+            }
         });
 
-        emitToAgent(deviceId, "leds:update", body);
-        const leds = await getLedSnapshot(deviceId);
-        emitStateUpdateToUIs(deviceId, { leds });
+        // Vers agent → bon event spécifique
+        emitToAgent(app, deviceId, "leds:state", { on: body.on });
 
+        // Rafraîchit les UIs
+        const leds = await getLedSnapshot(app, deviceId);
+        emitStateToUIs(app, deviceId, { leds });
+
+        await touchPresence(app, deviceId);
         return rep.code(202).send({ accepted: true });
     });
 
-    app.post("/devices/:id/leds/style", { onRequest: [authGuard] }, async (req: any, rep) => {
+    // LEDs: style (color/brightness/preset)
+    app.post("/devices/:id/leds/style", async (req: any, rep) => {
         const deviceId = req.params.id as string;
-        const userId = req.user.sub as string;
-        await ensureOwnDevice(userId, deviceId);
+
+        let userId: string | null = null;
+        if (isAgentRequest(req)) {
+            await verifyAgentApiKey(app, req, deviceId);
+        } else {
+            await app.authenticate(req);
+            userId = req.user.sub as string;
+            await ensureOwnDevice(app, userId, deviceId);
+        }
 
         const body = ledStyleSchema.parse(req.body);
 
         await app.prisma.$transaction(async (px) => {
             const current = await px.ledState.findUnique({ where: { deviceId } });
-
-            // Build update en ne touchant que les champs fournis
             const update: any = {};
             if (typeof body.color !== "undefined") update.color = body.color.toUpperCase();
             if (typeof body.brightness !== "undefined") update.brightness = body.brightness;
-            if ("preset" in body) update.preset = body.preset; // peut être string OU null
+            if ("preset" in body) update.preset = body.preset; // string ou null
+            // UX courante : style ⇒ allume
+            update.on = true;
 
             await px.ledState.upsert({
                 where: { deviceId },
                 update,
                 create: {
                     deviceId,
-                    on: current?.on ?? false,
+                    on: true,
                     color: typeof body.color !== "undefined" ? body.color.toUpperCase() : current?.color ?? "#FFFFFF",
                     brightness: typeof body.brightness !== "undefined" ? body.brightness : current?.brightness ?? 50,
-                    preset: "preset" in body ? body.preset : current?.preset ?? null
-                }
+                    preset: "preset" in body ? body.preset : current?.preset ?? null,
+                },
             });
 
-            await px.audit.create({
-                data: { userId, deviceId, type: "LED_SET", payload: { style: body } }
-            });
+            if (userId) {
+                await px.audit.create({
+                    data: { userId, deviceId, type: "LED_SET_STYLE", payload: { style: body } },
+                });
+            }
         });
 
-        emitToAgent(deviceId, "leds:update", body);
-        const leds = await getLedSnapshot(deviceId);
-        emitStateUpdateToUIs(deviceId, { leds });
+        // Vers agent → event dédié
+        emitToAgent(app, deviceId, "leds:style", { ...body });
 
+        // Rafraîchit les UIs
+        const leds = await getLedSnapshot(app, deviceId);
+        emitStateToUIs(app, deviceId, { leds });
+
+        await touchPresence(app, deviceId);
         return rep.code(202).send({ accepted: true });
     });
 
-    // ───────────────── Music
-
-    app.get("/devices/:id/music", { onRequest: [authGuard] }, async (req: any) => {
+    // Music: volume
+    app.post("/devices/:id/music/volume", async (req: any, rep) => {
         const deviceId = req.params.id as string;
-        const userId = req.user.sub as string;
-        await ensureOwnDevice(userId, deviceId);
-        return await getMusicSnapshot(deviceId);
-    });
 
-    app.post("/devices/:id/music/cmd", { onRequest: [authGuard] }, async (req: any, rep) => {
-        const deviceId = req.params.id as string;
-        const userId = req.user.sub as string;
-        await ensureOwnDevice(userId, deviceId);
-
-        const { action } = musicCmdSchema.parse(req.body);
-
-        await app.prisma.$transaction(async (px) => {
-            const current = await px.musicState.findUnique({ where: { deviceId } });
-            let nextStatus: "play" | "pause" = current?.status === "play" ? "play" : "pause";
-            if (action === "play") nextStatus = "play";
-            if (action === "pause") nextStatus = "pause";
-
-            await px.musicState.upsert({
-                where: { deviceId },
-                update: { status: nextStatus },
-                create: { deviceId, status: nextStatus, volume: current?.volume ?? 50 }
-            });
-
-            await px.audit.create({
-                data: { userId, deviceId, type: "MUSIC_CMD", payload: { action } }
-            });
-        });
-
-        emitToAgent(deviceId, "music:cmd", { action });
-        const music = await getMusicSnapshot(deviceId);
-        emitStateUpdateToUIs(deviceId, { music });
-
-        return rep.code(202).send({ accepted: true });
-    });
-
-    app.post("/devices/:id/music/volume", { onRequest: [authGuard] }, async (req: any, rep) => {
-        const deviceId = req.params.id as string;
-        const userId = req.user.sub as string;
-        await ensureOwnDevice(userId, deviceId);
+        let userId: string | null = null;
+        if (isAgentRequest(req)) {
+            await verifyAgentApiKey(app, req, deviceId);
+        } else {
+            await app.authenticate(req);
+            userId = req.user.sub as string;
+            await ensureOwnDevice(app, userId, deviceId);
+        }
 
         const { value } = musicVolumeSchema.parse(req.body);
 
-        await app.prisma.$transaction(async (px) => {
-            const current = await px.musicState.findUnique({ where: { deviceId } });
-            await px.musicState.upsert({
-                where: { deviceId },
-                update: { volume: value },
-                create: { deviceId, status: current?.status ?? "pause", volume: value }
-            });
-            await px.audit.create({
-                data: { userId, deviceId, type: "MUSIC_VOLUME", payload: { value } }
-            });
+        const stored = await app.prisma.musicState.upsert({
+            where: { deviceId },
+            update: { volume: value },
+            create: { deviceId, status: "pause", volume: value },
         });
 
-        emitToAgent(deviceId, "music:cmd", { action: "volume", value });
-        const music = await getMusicSnapshot(deviceId);
-        emitStateUpdateToUIs(deviceId, { music });
+        if (userId) {
+            await app.prisma.audit.create({
+                data: { userId, deviceId, type: "MUSIC_VOLUME", payload: { value } },
+            });
+        }
 
+        // Vers agent → utilise l’event prévu par l’agent (on_music_volume)
+        // L’agent accepte { music:{ volume } } OU { volume } (il gère les deux).
+        emitToAgent(app, deviceId, "music:volume", { music: { volume: value } });
+
+        // Rafraîchit les UIs
+        emitStateToUIs(app, deviceId, {
+            music: { status: stored.status as "play" | "pause", volume: stored.volume, track: null },
+        });
+
+        await touchPresence(app, deviceId);
+        return rep.code(202).send({ accepted: true });
+    });
+
+    // Music: commandes
+    app.post("/devices/:id/music/cmd", async (req: any, rep) => {
+        const deviceId = req.params.id as string;
+
+        let userId: string | null = null;
+        if (isAgentRequest(req)) {
+            await verifyAgentApiKey(app, req, deviceId);
+        } else {
+            await app.authenticate(req);
+            userId = req.user.sub as string;
+            await ensureOwnDevice(app, userId, deviceId);
+        }
+
+        const { action } = musicCmdSchema.parse(req.body);
+
+        // On met à jour status uniquement pour play/pause
+        const existing = await app.prisma.musicState.findUnique({ where: { deviceId } });
+        let nextStatus: "play" | "pause" = existing?.status === "play" ? "play" : "pause";
+        if (action === "play") nextStatus = "play";
+        if (action === "pause") nextStatus = "pause";
+
+        const stored = await app.prisma.musicState.upsert({
+            where: { deviceId },
+            update: { status: nextStatus },
+            create: { deviceId, status: nextStatus, volume: existing?.volume ?? 50 },
+        });
+
+        if (userId) {
+            await app.prisma.audit.create({
+                data: { userId, deviceId, type: "MUSIC_CMD", payload: { action } },
+            });
+        }
+
+        // Vers agent → event prévu par l’agent (on_music_cmd)
+        emitToAgent(app, deviceId, "music:cmd", { music: { action } });
+
+        // Rafraîchit les UIs
+        emitStateToUIs(app, deviceId, {
+            music: { status: stored.status as "play" | "pause", volume: stored.volume, track: null },
+        });
+
+        await touchPresence(app, deviceId);
         return rep.code(202).send({ accepted: true });
     });
 };
