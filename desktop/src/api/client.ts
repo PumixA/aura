@@ -1,4 +1,3 @@
-// src/api/client.ts
 import axios from "axios";
 
 const {
@@ -11,6 +10,7 @@ if (!VITE_API_URL || !VITE_DEVICE_ID || !VITE_API_KEY) {
     console.error("Config manquante: VITE_API_URL / VITE_DEVICE_ID / VITE_API_KEY");
 }
 
+// Base API (serveur Fastify) + identité de l'appareil (agent/desktop)
 export const API_BASE = `${VITE_API_URL}/api/v1`;
 export const DEVICE_ID = String(VITE_DEVICE_ID);
 const API_KEY = String(VITE_API_KEY);
@@ -25,7 +25,7 @@ export const api = axios.create({
     },
 });
 
-// Petit helper de log
+// Log simple des erreurs
 api.interceptors.response.use(
     (res) => res,
     (err) => {
