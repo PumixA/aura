@@ -417,7 +417,7 @@ components:
         role: { type: string }
         createdAt: { type: string, format: date-time }
 
-    # ── Owner / Online / Unpair (NOUVEAUX SCHEMAS)
+    # ── Owner / Online / Unpair / Register (nouveaux/compléments)
     DeviceOwnerResponse:
       type: object
       required: [owner]
@@ -450,6 +450,26 @@ components:
       properties:
         ok: { type: boolean }
       example: { ok: true }
+
+    DeviceRegisterAgentlessBody:
+      type: object
+      required: [deviceId, apiKey]
+      properties:
+        deviceId: { type: string, format: uuid }
+        apiKey: { type: string, minLength: 8 }
+        name:
+          type: string
+          description: "Nom optionnel du miroir (ex: 'Miroir Salon')."
+      example:
+        deviceId: "89e81262-2101-4f6a-9969-40b81a18d929"
+        apiKey: "yDJNMXSdjbeTeChF8ITPyGdd37s2K9R8"
+        name: "mirroir melvin"
+
+    DeviceRegisterAgentlessResponse:
+      type: object
+      required: [device]
+      properties:
+        device: { $ref: '#/components/schemas/DeviceSimple' }
 
 paths:
   # 0) Health & Public
@@ -802,6 +822,27 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/UnpairResponse' }
+
+  # NEW: register device without user (agentless bootstrap)
+  /devices/register-agentless:
+    post:
+      tags: [Devices]
+      summary: Register device without user (hash ApiKey in DB)
+      description: >
+        Crée ou met à jour un device **sans propriétaire** en stockant `apiKeyHash`
+        (bcrypt) à partir de l’`apiKey` fournie. À utiliser pour le bootstrap local.
+        **Aucune authentification** exposée ici — protéger l'accès (réseau local/firewall).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeviceRegisterAgentlessBody' }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeviceRegisterAgentlessResponse' }
 
   # 3) Pairing (Agent)
   /devices/{deviceId}/pairing-token:

@@ -60,7 +60,6 @@ function formatAgo(iso?: string | null): string {
     return `il y a ${h} h`;
 }
 
-
 function GhostButton({ label, onPress, style }: { label: string; onPress?: () => void; style?: any }) {
     return (
         <Pressable
@@ -222,7 +221,7 @@ export default function DeviceDetail() {
     const error = useDeviceState((s) => s.byId[deviceId]?.error);
     const fetchSnapshot = useDeviceState((s) => s.fetchSnapshot);
     const renameDevice = useDeviceState((s) => s.renameDevice);
-    const deleteDevice = useDeviceState((s) => s.deleteDevice);
+    const deleteDevice = useDeviceState((s) => s.deleteDevice); // <- utilise maintenant /unpair en interne
     const ledsToggle = useDeviceState((s) => s.ledsToggle);
     const ledsStyle = useDeviceState((s) => s.ledsStyle);
     const musicCmd = useDeviceState((s) => s.musicCmd);
@@ -311,7 +310,7 @@ export default function DeviceDetail() {
                                 style: 'destructive',
                                 onPress: async () => {
                                     try {
-                                        await deleteDevice(deviceId);
+                                        await deleteDevice(deviceId); // -> /unpair
                                         await refreshDevices();
                                         router.back();
                                     } catch {

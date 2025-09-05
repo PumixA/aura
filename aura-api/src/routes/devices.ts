@@ -13,6 +13,12 @@ const renameSchema = z.object({
     name: z.string().min(1).max(100)
 })
 
+const provisionSchema = z.object({
+    deviceId: z.string().uuid(),
+    apiKey: z.string().min(8),
+    name: z.string().min(1).max(100).optional()
+})
+
 const devicesRoutes: FastifyPluginAsync = async (app) => {
     const ensureOwnDevice = async (userId: string, deviceId: string) => {
         const d = await app.prisma.device.findUnique({
@@ -75,6 +81,68 @@ const devicesRoutes: FastifyPluginAsync = async (app) => {
         return deviceId
     }
 
+    // ---------------------------------------------------------------------
+    // NEW: Provision anonyme d'un miroir (sans utilisateur) avec id + apiKey
+    // ---------------------------------------------------------------------
+    app.post('/devices/provision', async (req: any, reply) => {
+        const { deviceId, apiKey, name } = provisionSchema.parse(req.body)
+
+        const hash = await bcrypt.hash(apiKey, 10)
+
+        const existing = await app.prisma.device.findUnique({
+            where: { id: deviceId },
+            select: { id: true, name: true }
+        })
+
+        let status: 'created' | 'updated' = 'created'
+        let device: { id: string; name: string }
+
+        await app.prisma.$transaction(async (px) => {
+            if (existing) {
+                const updated = await px.device.update({
+                    where: { id: deviceId },
+                    data: {
+                        apiKeyHash: hash,
+                        disabled: false,
+                        // on ne touche pas le nom si non fourni
+                        ...(name ? { name } : {}),
+                        ownerId: null,
+                        pairedAt: null
+                    },
+                    select: { id: true, name: true }
+                })
+                status = 'updated'
+                device = updated
+            } else {
+                const created = await px.device.create({
+                    data: {
+                        id: deviceId,
+                        name: name ?? 'Miroir',
+                        ownerId: null,
+                        pairedAt: null,
+                        apiKeyHash: hash,
+                        disabled: false
+                    },
+                    select: { id: true, name: true }
+                })
+                status = 'created'
+                device = created
+            }
+
+            await px.audit.create({
+                data: {
+                    userId: null,
+                    deviceId,
+                    type: 'DEVICE_PROVISIONED',
+                    payload: { status, anonymous: true }
+                }
+            })
+        })
+
+        return reply.send({ status, device })
+    })
+
+    // ---------------------------------------------------------------------
 
     app.get('/devices', { preHandler: app.authenticate }, async (req: any) => {
         const userId = req.user.sub as string
@@ -262,7 +330,6 @@ const devicesRoutes: FastifyPluginAsync = async (app) => {
         }
     })
 
-
     const AllowedWidgetKeys = ["clock","weather","music","leds"] as const
     const widgetItemSchema = z.object({
         key: z.enum(AllowedWidgetKeys),
@@ -324,7 +391,6 @@ const devicesRoutes: FastifyPluginAsync = async (app) => {
 
         return { items: widgets }
     })
-
 
     app.get('/devices/:deviceId/owner', async (req: any, reply) => {
         const { deviceId } = req.params as { deviceId: string }

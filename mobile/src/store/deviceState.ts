@@ -34,7 +34,8 @@ type PerDevice = {
     loading: boolean;
     error?: string | null;
 
-    weather?: {
+    weather?:
+        | {
         city: string;
         units: 'metric' | 'imperial';
         temp: number;
@@ -42,7 +43,8 @@ type PerDevice = {
         icon: string;
         updatedAt: string;
         ttlSec: number;
-    } | null;
+    }
+        | null;
     weatherLoading?: boolean;
     weatherError?: string | null;
 
@@ -59,7 +61,7 @@ interface DeviceStateStore {
 
     fetchSnapshot: (deviceId: string) => Promise<void>;
     renameDevice: (deviceId: string, name: string) => Promise<{ id: string; name: string }>;
-    deleteDevice: (deviceId: string) => Promise<void>;
+    deleteDevice: (deviceId: string) => Promise<void>; // ← “Dissocier” (POST /unpair)
 
     ledsToggle: (deviceId: string, on: boolean) => Promise<void>;
     ledsStyle: (deviceId: string, patch: Partial<Pick<LedState, 'color' | 'brightness' | 'preset'>>) => Promise<void>;
@@ -86,7 +88,9 @@ function armOnlineTimer(
     const per = st.byId[deviceId] ?? ({ loading: false } as PerDevice);
 
     if (per._onlineTimer) {
-        try { clearTimeout(per._onlineTimer); } catch {}
+        try {
+            clearTimeout(per._onlineTimer);
+        } catch {}
     }
     const t = setTimeout(() => {
         const cur = get().byId[deviceId];
@@ -94,16 +98,16 @@ function armOnlineTimer(
         setPartial({
             byId: {
                 ...get().byId,
-                [deviceId]: { ...cur, agentOnline: false, _onlineTimer: null }
-            }
+                [deviceId]: { ...cur, agentOnline: false, _onlineTimer: null },
+            },
         });
     }, ONLINE_TTL_MS);
 
     setPartial({
         byId: {
             ...st.byId,
-            [deviceId]: { ...per, agentOnline: true, _onlineTimer: t }
-        }
+            [deviceId]: { ...per, agentOnline: true, _onlineTimer: t },
+        },
     });
 }
 
@@ -139,18 +143,17 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
                     set({
                         byId: {
                             ...get().byId,
-                            [deviceId]: { ...current, agentOnline: !!live?.online }
-                        }
+                            [deviceId]: { ...current, agentOnline: !!live?.online },
+                        },
                     });
                 }
-            } catch {
-            }
+            } catch {}
         } catch {
             set({
                 byId: {
                     ...get().byId,
-                    [deviceId]: { ...cur, loading: false, error: 'Impossible de charger le snapshot.' }
-                }
+                    [deviceId]: { ...cur, loading: false, error: 'Impossible de charger le snapshot.' },
+                },
             });
         }
     },
@@ -160,12 +163,27 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
         return data.device;
     },
 
+    // ⬇️ CHANGÉ : on appelle l’unpair (POST) au lieu de DELETE /devices/:id
     deleteDevice: async (deviceId) => {
         const st = get();
         const per = st.byId[deviceId];
-        if (per?._socket) { try { per._socket.disconnect(); } catch {} }
-        if (per?._onlineTimer) { try { clearTimeout(per._onlineTimer); } catch {} }
-        await api.delete(`/devices/${deviceId}`);
+
+        // fermer proprement
+        if (per?._socket) {
+            try {
+                per._socket.disconnect();
+            } catch {}
+        }
+        if (per?._onlineTimer) {
+            try {
+                clearTimeout(per._onlineTimer);
+            } catch {}
+        }
+
+        // Appel backend: dissocier (unpair)
+        await api.post(`/devices/${deviceId}/unpair`);
+
+        // Nettoyage store (on retire l’entrée locale)
         const copy = { ...st.byId };
         delete copy[deviceId];
         set({ byId: copy });
@@ -245,18 +263,21 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
             throw new Error('MUSIC_VOLUME_FAILED');
         }
     },
+
     widgetsPut: async (deviceId, items) => {
         const state = get();
         const prev = state.byId[deviceId]?.data;
         if (!prev) throw new Error('NO_SNAPSHOT');
 
-        const optimistic: DeviceSnapshot = { ...prev, widgets: items.slice().sort((a,b)=>a.orderIndex-b.orderIndex) };
+        const optimistic: DeviceSnapshot = { ...prev, widgets: items.slice().sort((a, b) => a.orderIndex - b.orderIndex) };
         set({ byId: { ...state.byId, [deviceId]: { ...state.byId[deviceId], data: optimistic } } });
 
         try {
             const { data } = await api.put<{ items: WidgetItem[] }>(`/devices/${deviceId}/widgets`, { items });
-            const normalized = data.items.slice().sort((a,b)=>a.orderIndex-b.orderIndex);
-            set({ byId: { ...state.byId, [deviceId]: { ...state.byId[deviceId], data: { ...prev, widgets: normalized } } } });
+            const normalized = data.items.slice().sort((a, b) => a.orderIndex - b.orderIndex);
+            set({
+                byId: { ...state.byId, [deviceId]: { ...state.byId[deviceId], data: { ...prev, widgets: normalized } } },
+            });
             return normalized;
         } catch {
             set({ byId: { ...state.byId, [deviceId]: { ...state.byId[deviceId], data: prev } } });
@@ -272,7 +293,12 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
             const { data } = await api.get(`/weather`, { params: { city, units } });
             set({ byId: { ...get().byId, [key]: { ...get().byId[key], weather: data, weatherLoading: false } } });
         } catch {
-            set({ byId: { ...get().byId, [key]: { ...get().byId[key], weatherLoading: false, weatherError: 'Météo indisponible.' } } });
+            set({
+                byId: {
+                    ...get().byId,
+                    [key]: { ...get().byId[key], weatherLoading: false, weatherError: 'Météo indisponible.' },
+                },
+            });
         }
     },
 
@@ -283,7 +309,12 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
 
         const token = useAuth.getState().accessToken;
         if (!token) {
-            set({ byId: { ...st.byId, [deviceId]: { ...per, wsStatus: 'disconnected', wsError: 'NO_TOKEN', agentOnline: false } } });
+            set({
+                byId: {
+                    ...st.byId,
+                    [deviceId]: { ...per, wsStatus: 'disconnected', wsError: 'NO_TOKEN', agentOnline: false },
+                },
+            });
             return;
         }
 
@@ -298,8 +329,8 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
                     wsError: null,
                     agentOnline: per.agentOnline ?? false,
                     _onlineTimer: per._onlineTimer ?? null,
-                }
-            }
+                },
+            },
         });
 
         sock.on('connect', () => {
@@ -307,8 +338,8 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
             set({
                 byId: {
                     ...get().byId,
-                    [deviceId]: { ...get().byId[deviceId], wsStatus: 'connected', wsError: null }
-                }
+                    [deviceId]: { ...get().byId[deviceId], wsStatus: 'connected', wsError: null },
+                },
             });
         });
 
@@ -320,15 +351,19 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
                         ...get().byId[deviceId],
                         wsStatus: 'disconnected',
                         wsError: String(err?.message || err),
-                        agentOnline: false
-                    }
-                }
+                        agentOnline: false,
+                    },
+                },
             });
         });
 
         sock.on('disconnect', () => {
             const cur = get().byId[deviceId];
-            if (cur?._onlineTimer) { try { clearTimeout(cur._onlineTimer); } catch {} }
+            if (cur?._onlineTimer) {
+                try {
+                    clearTimeout(cur._onlineTimer);
+                } catch {}
+            }
             set({
                 byId: {
                     ...get().byId,
@@ -336,9 +371,9 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
                         ...get().byId[deviceId],
                         wsStatus: 'disconnected',
                         agentOnline: false,
-                        _onlineTimer: null
-                    }
-                }
+                        _onlineTimer: null,
+                    },
+                },
             });
         });
 
@@ -346,11 +381,12 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
             const raw = payload?.state ?? payload ?? {};
             const cur = get().byId[deviceId]?.data;
 
-            const base: DeviceSnapshot = cur ?? {
-                leds: { on: false, color: '#FFFFFF', brightness: 50, preset: null },
-                music: { status: 'pause', volume: 50, track: null },
-                widgets: [],
-            };
+            const base: DeviceSnapshot =
+                cur ?? {
+                    leds: { on: false, color: '#FFFFFF', brightness: 50, preset: null },
+                    music: { status: 'pause', volume: 50, track: null },
+                    widgets: [],
+                };
 
             const next: DeviceSnapshot = {
                 leds: raw.leds ? { ...base.leds, ...raw.leds } : base.leds,
@@ -361,8 +397,8 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
             set({
                 byId: {
                     ...get().byId,
-                    [deviceId]: { ...get().byId[deviceId], data: next }
-                }
+                    [deviceId]: { ...get().byId[deviceId], data: next },
+                },
             });
 
             armOnlineTimer(deviceId, get, (p) => set(p as any));
@@ -376,12 +412,16 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
                 armOnlineTimer(deviceId, get, (p) => set(p as any));
             } else {
                 const cur = get().byId[deviceId];
-                if (cur?._onlineTimer) { try { clearTimeout(cur._onlineTimer); } catch {} }
+                if (cur?._onlineTimer) {
+                    try {
+                        clearTimeout(cur._onlineTimer);
+                    } catch {}
+                }
                 set({
                     byId: {
                         ...get().byId,
-                        [deviceId]: { ...get().byId[deviceId], agentOnline: false, _onlineTimer: null }
-                    }
+                        [deviceId]: { ...get().byId[deviceId], agentOnline: false, _onlineTimer: null },
+                    },
                 });
             }
         });
@@ -391,16 +431,20 @@ export const useDeviceState = create<DeviceStateStore>((set, get) => ({
         const st = get();
         const per = st.byId[deviceId];
         if (per?._socket) {
-            try { per._socket.disconnect(); } catch {}
+            try {
+                per._socket.disconnect();
+            } catch {}
         }
         if (per?._onlineTimer) {
-            try { clearTimeout(per._onlineTimer); } catch {}
+            try {
+                clearTimeout(per._onlineTimer);
+            } catch {}
         }
         set({
             byId: {
                 ...st.byId,
-                [deviceId]: { ...per, _socket: null, wsStatus: 'disconnected', agentOnline: false, _onlineTimer: null }
-            }
+                [deviceId]: { ...per, _socket: null, wsStatus: 'disconnected', agentOnline: false, _onlineTimer: null },
+            },
         });
     },
 }));
