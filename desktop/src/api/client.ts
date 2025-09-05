@@ -1,4 +1,3 @@
-// src/api/client.ts
 import axios from "axios";
 
 const {
@@ -25,7 +24,6 @@ export const api = axios.create({
     },
 });
 
-// Petit helper de log
 api.interceptors.response.use(
     (res) => res,
     (err) => {

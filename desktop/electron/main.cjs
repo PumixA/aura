@@ -7,8 +7,8 @@ function createWindow() {
     win = new BrowserWindow({
         width: 1920,
         height: 1080,
-        fullscreen: true,              // ⬅️ direct plein écran
-        autoHideMenuBar: true,         // ⬅️ masque la barre de menu
+        fullscreen: true,
+        autoHideMenuBar: true,
         webPreferences: {
             preload: path.join(__dirname, "preload.cjs"),
             nodeIntegration: false,
@@ -20,7 +20,7 @@ function createWindow() {
 
     if (devServer) {
         win.loadURL(devServer);
-        win.webContents.openDevTools(); // facultatif en dev
+        win.webContents.openDevTools();
     } else {
         win.loadFile(path.join(__dirname, "../dist/index.html"));
     }

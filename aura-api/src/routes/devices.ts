@@ -75,6 +75,7 @@ const devicesRoutes: FastifyPluginAsync = async (app) => {
         return deviceId
     }
 
+
     app.get('/devices', { preHandler: app.authenticate }, async (req: any) => {
         const userId = req.user.sub as string
 
@@ -125,18 +126,18 @@ const devicesRoutes: FastifyPluginAsync = async (app) => {
         const { deviceId, pairingToken } = pairSchema.parse(req.body)
         const userId = req.user.sub as string
 
-        const token = await app.prisma.devicePairingToken.findUnique({
+        const tokenRow = await app.prisma.devicePairingToken.findUnique({
             where: { deviceId },
-            select: { token: true, expiresAt: true }
+            select: { token: true, expiresAt: true, transfer: true }
         })
-        if (!token) return reply.code(400).send({ error: 'BadRequest', message: 'No active pairing token' })
+        if (!tokenRow) return reply.code(400).send({ error: 'BadRequest', message: 'No active pairing token' })
 
         const now = new Date()
-        if (token.expiresAt <= now) {
+        if (tokenRow.expiresAt <= now) {
             await app.prisma.devicePairingToken.delete({ where: { deviceId } })
             return reply.code(410).send({ error: 'Gone', message: 'Pairing token expired' })
         }
-        if (token.token !== pairingToken) {
+        if (tokenRow.token !== pairingToken) {
             return reply.code(401).send({ error: 'Unauthorized', message: 'Invalid pairing token' })
         }
 
@@ -146,7 +147,11 @@ const devicesRoutes: FastifyPluginAsync = async (app) => {
         })
         if (!device) return reply.code(404).send({ error: 'NotFound', message: 'Device not found' })
         if (device.disabled) return reply.code(409).send({ error: 'Conflict', message: 'Device disabled' })
-        if (device.ownerId && device.ownerId !== userId) {
+
+        const allowReassign = !!tokenRow.transfer
+        const isUnassigned = !device.ownerId
+
+        if (device.ownerId && device.ownerId !== userId && !allowReassign) {
             return reply.code(409).send({ error: 'Conflict', message: 'Device already paired' })
         }
 
@@ -156,7 +161,14 @@ const devicesRoutes: FastifyPluginAsync = async (app) => {
                 data: { ownerId: userId, pairedAt: now }
             })
             await px.devicePairingToken.delete({ where: { deviceId } })
-            await px.audit.create({ data: { userId, deviceId, type: 'DEVICE_PAIRED', payload: {} } })
+            await px.audit.create({
+                data: {
+                    userId,
+                    deviceId,
+                    type: allowReassign ? 'DEVICE_TRANSFERRED' : (isUnassigned ? 'DEVICE_PAIRED' : 'DEVICE_REPAIRED'),
+                    payload: {}
+                }
+            })
             return d
         })
 
@@ -250,6 +262,7 @@ const devicesRoutes: FastifyPluginAsync = async (app) => {
         }
     })
 
+
     const AllowedWidgetKeys = ["clock","weather","music","leds"] as const
     const widgetItemSchema = z.object({
         key: z.enum(AllowedWidgetKeys),
@@ -310,6 +323,54 @@ const devicesRoutes: FastifyPluginAsync = async (app) => {
         emitWs(app, deviceId, 'state:update', { widgets })
 
         return { items: widgets }
+    })
+
+
+    app.get('/devices/:deviceId/owner', async (req: any, reply) => {
+        const { deviceId } = req.params as { deviceId: string }
+
+        if (isAgentRequest(req)) {
+            await verifyAgentApiKey(app, req, deviceId)
+        } else {
+            await app.authenticate(req)
+            const userId = req.user.sub as string
+            await ensureOwnDevice(userId, deviceId)
+        }
+
+        const owner = await app.prisma.device.findUnique({
+            where: { id: deviceId },
+            select: { owner: { select: { id: true, email: true, firstName: true, lastName: true } } }
+        })
+
+        return reply.send({ owner: owner?.owner ?? null })
+    })
+
+    app.post('/devices/:deviceId/unpair', async (req: any, reply) => {
+        const { deviceId } = req.params as { deviceId: string }
+
+        let actingUserId: string | null = null
+        if (isAgentRequest(req)) {
+            await verifyAgentApiKey(app, req, deviceId)
+        } else {
+            await app.authenticate(req)
+            actingUserId = req.user.sub as string
+            await ensureOwnDevice(actingUserId, deviceId)
+        }
+
+        await app.prisma.$transaction(async (px) => {
+            const before = await px.device.findUnique({ where: { id: deviceId }, select: { ownerId: true } })
+            await px.device.update({
+                where: { id: deviceId },
+                data: { ownerId: null, pairedAt: null }
+            })
+            await px.devicePairingToken.deleteMany({ where: { deviceId } })
+            await px.audit.create({
+                data: { userId: actingUserId, deviceId, type: 'DEVICE_UNPAIRED', payload: { previousOwnerId: before?.ownerId ?? null } }
+            })
+        })
+
+        emitWs(app, deviceId, 'state:update', {}) // ping UI/agent
+        return reply.send({ ok: true })
     })
 }
 

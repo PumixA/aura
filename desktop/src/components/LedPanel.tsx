@@ -1,4 +1,3 @@
-// src/components/LedPanel.tsx
 import React, { useState } from "react";
 import { clsx } from "clsx";
 import type { LedState } from "../api/device";
@@ -6,14 +5,13 @@ import { ledsSetPower, ledsSetStyle } from "../api/device";
 
 type Props = {
     leds: LedState;
-    onRefresh: () => void; // callback pour refetch après action
+    onRefresh: () => void;
 };
 
 export default function LedPanel({ leds, onRefresh }: Props) {
     const [busy, setBusy] = useState(false);
     const [local, setLocal] = useState<LedState>(leds);
 
-    // synchro si props changent
     React.useEffect(() => setLocal(leds), [leds]);
 
     async function togglePower() {

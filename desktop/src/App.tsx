@@ -1,9 +1,12 @@
-// src/App.tsx
 import React from "react";
-import Dashboard from "./pages/Dashboard";
 import "./App.css";
-import "./index.css";
+
+import Dashboard from "./pages/Dashboard";
 
 export default function App() {
-    return <Dashboard />;
+    return (
+        <div className="app">
+            <Dashboard />
+        </div>
+    );
 }

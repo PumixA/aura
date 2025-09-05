@@ -11,7 +11,6 @@ export default function Home() {
     const [loading, setLoading] = useState(true);
     const pollRef = useRef<number | null>(null);
 
-    // Poll DB comme l'agent, toutes les X secondes
     useEffect(() => {
         let mounted = true;
         async function pull() {
@@ -37,7 +36,6 @@ export default function Home() {
     const brightness = snap?.leds?.brightness ?? 0;
     const color = snap?.leds?.color ?? '#FFFFFF';
 
-    // UI helpers
     function nextTab() { setTab(prev => prev === 'music' ? 'light' : 'music'); }
     function prevTab() { setTab(prev => prev === 'music' ? 'light' : 'music'); }
 
@@ -61,12 +59,10 @@ export default function Home() {
 
     return (
         <div className="center" style={{ height: '100%', width: '100%', position: 'relative' }}>
-            {/* bouton paramètres (placeholder) */}
             <div style={{ position: 'absolute', top: 20, right: 20 }}>
                 <div className="icon-btn" title="Paramètres">⚙️</div>
             </div>
 
-            {/* contenu principal */}
             <div className="col" style={{ alignItems: 'center', gap: 36 }}>
                 {/* nav modules */}
                 <div className="row" style={{ gap: 40 }}>
@@ -77,7 +73,6 @@ export default function Home() {
                     <div className="arrow" onClick={nextTab}>›</div>
                 </div>
 
-                {/* zone contrôle */}
                 {loading && <div className="value" style={{ color: 'var(--muted)' }}>Chargement…</div>}
 
                 {!loading && tab === 'music' && (
@@ -136,7 +131,6 @@ export default function Home() {
                 )}
             </div>
 
-            {/* titre (optionnel) */}
             <div style={{ position: 'absolute', bottom: 26, left: 0, right: 0, textAlign: 'center', color: 'var(--muted)', letterSpacing: 2 }}>
                 {title}
             </div>
